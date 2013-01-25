@@ -5,7 +5,7 @@ use warnings;
 use v5.10.1;
 
 use parent 'Plack::Component';
-use Plack::Util::Accessor qw(base_dir base_uri file_types listing_property);
+use Plack::Util::Accessor qw(base_dir base_uri file_types listing_property path_map);
 
 use Plack::Request;
 use RDF::Trine qw(statement iri);
@@ -14,7 +14,7 @@ use RDF::Trine::Parser;
 use RDF::Trine::Iterator::Graph;
 use RDF::Trine::Serializer;
 use File::Spec::Functions qw(catfile catdir);
-use Scalar::Util;
+use Scalar::Util qw(reftype);
 use URI;
 
 our %FORMATS = (
@@ -29,8 +29,7 @@ sub prepare_app {
     my $self = shift;
     return if $self->{prepared};
     
-    die "Missing base_dir" 
-        unless -d ($self->base_dir // '/dev/null');
+    die "missing base_dir" unless $self->base_dir and -d $self->base_dir;
 
     $self->base_uri( URI->new( $self->base_uri ) ) 
         if $self->base_uri;
@@ -43,6 +42,8 @@ sub prepare_app {
     if ( $self->listing_property ) {
         $self->listing_property( iri( $self->listing_property ) );
     }
+
+    $self->path_map( sub { shift } ) unless $self->path_map;
 
     $self->{prepared} = 1;
 }
@@ -62,9 +63,10 @@ sub call {
         unless $path =~ /^[a-z0-9:\._@-]*$/i and $path !~ /\.\.\//;
 
     my $uri = URI->new( $base . $path );
-    my $dir = catdir( $self->base_dir, $path );
 
     $env->{'rdflow.uri'} = $uri; # TODO: document this
+
+    my $dir = catdir( $self->base_dir, $self->path_map->($path) );
 
     return [ 404, [ 'Content-type' => 'text/plain' ], [ "Not found: $uri" ] ]
         unless -d $dir;
@@ -188,9 +190,11 @@ sub negotiate {
 
 =head1 DESCRIPTION
 
-This Plack application serves RDF from static files instead of using a triple
-store. In short, each RDF resource to be served corresponds to a directory in
-the file system. 
+This L<Plack> application serves RDF from static files. In short, each RDF
+resource to be served corresponds to a directory in the file system, located in
+a common based directory C<base_dir>. All RDF resources must share a common
+base URI, which is either taken from the L<PSGI> request or configured with
+C<base_uri>.
 
 =head2 EXAMPLE
 
@@ -218,6 +222,11 @@ Mandatory base directory that all resource directories are located in.
 =item base_uri
 
 The base URI of all resources. 
+
+=item path_map
+
+Optional code reference that maps a local part of an URI to a relative
+directory. Set to the identity mapping by default.
 
 =item file_types
 
