@@ -5,7 +5,8 @@ use warnings;
 use v5.10.1;
 
 use parent 'Plack::Component';
-use Plack::Util::Accessor qw(base_dir base_uri file_types listing_property path_map);
+use Plack::Util::Accessor qw(base_dir base_uri file_types path_map 
+    include_index index_property namespaces);
 
 use Plack::Request;
 use RDF::Trine qw(statement iri);
@@ -37,10 +38,11 @@ sub prepare_app {
     my $types = join '|', @{ $self->file_types // [qw(rdfxml nt ttl)] };
     $self->file_types( qr/^($types)/ );
 
-    $self->listing_property( 'http://www.w3.org/2000/01/rdf-schema#seeAlso' )
-        unless defined $self->listing_property;
-    if ( $self->listing_property ) {
-        $self->listing_property( iri( $self->listing_property ) );
+    if ( $self->include_index ) {
+        $self->index_property( 'http://www.w3.org/2000/01/rdf-schema#seeAlso' )
+            unless defined $self->index_property;
+        $self->index_property( iri( $self->index_property ) )
+            if $self->index_property;
     }
 
     $self->path_map( sub { shift } ) unless $self->path_map;
@@ -60,11 +62,12 @@ sub call {
 
     # TODO: configure allowed characters
     return [ 404, [ 'Content-type' => 'text/plain' ], [ "Not found" ] ]
-        unless $path =~ /^[a-z0-9:\._@-]*$/i and $path !~ /\.\.\//;
+        if $path !~ /^[a-z0-9:\._@-]*$/i or $path =~ /\.\.\// or
+           ( $path eq '' and !$self->include_index );
 
     my $uri = URI->new( $base . $path );
 
-    $env->{'rdflow.uri'} = $uri; # TODO: document this
+    $env->{'rdf.uri'} = $uri; # TODO: document this
 
     my $dir = catdir( $self->base_dir, $self->path_map->($path) );
 
@@ -97,9 +100,9 @@ sub call {
 
 
     # add listing on base URI
-    if ( $path eq '' and $self->listing_property ) {
+    if ( $path eq '' and $self->index_property ) {
         my $subject   = iri( $uri );
-        my $predicate = $self->listing_property;
+        my $predicate = $self->index_property;
         my @stms;
         opendir(my $dirhandle, $dir);
         foreach my $p (readdir $dirhandle) {
@@ -129,6 +132,8 @@ sub call {
     # TODO: do not serialize at all on request
     # $env->{'rdflow.data'} = $iter;
 
+    # TODO: HTTP HEAD method
+
     # negotiate and serialize
     my ($ser, @headers) = $self->negotiate( $env, $uri );
     if (!$ser) {
@@ -149,21 +154,22 @@ sub call {
     }
 }
 
-=method negotiate( $env, $base_uri )
+=method negotiate( $env )
 
 Selects an RDF serializer based on the PSGI environment variable
 C<negotiate.format> (see L<Plack::Middleware::Negotiate>) or the C<negotiate>
-method of L<RDF::Trine::Serializer>. Returns a L<RDF::Trine::Serializer> (or
-C<undef> on error) and a (possibly empty) list of HTTP response headers.
+method of L<RDF::Trine::Serializer>. Returns first a L<RDF::Trine::Serializer>
+on success or C<undef> on error) and second a (possibly empty) list of HTTP
+response headers.
 
 =cut
 
 sub negotiate {
-    my ($self, $env, $base_uri) = @_;
+    my ($self, $env) = @_;
 
-    my %options = (
-        base => $base_uri,
-        # namespaces => $self->_namespace_hashref # TODO: pretty
+    my %options = ( 
+        base       => $env->{'rdflow.uri'}, 
+        namespaces => ( $self->namespaces // { } ) 
     );
 
     if ( $env->{'negotiate.format'} ) {
@@ -233,10 +239,16 @@ directory. Set to the identity mapping by default.
 An array of RDF file types (extensions) to look for. Set to
 C<['rdfxml','nt','ttl']> by default.
 
-=item listing_property
+=item include_index
 
-RDF property to use for listing all resources connected to the base URI.  Set
-to C<rdfs:seeAlso> by default. Can be disabled by setting a false value.
+By default a HTTP 404 error is returned if one tries to access the base
+directory. Enable this option to also serve RDF data from this location.
+
+=item index_property
+
+RDF property to use for listing all resources connected to the base URI (if
+<include_index> is enabled).  Set to C<rdfs:seeAlso> by default. Can be
+disabled by setting a false value.
 
 =back
 
