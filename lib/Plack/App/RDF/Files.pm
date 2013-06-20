@@ -1,11 +1,10 @@
 package Plack::App::RDF::Files;
-#ABSTRACT: Combine and serve RDF from static files
-use strict;
-use warnings;
-use v5.10.1;
+#ABSTRACT: Serve RDF data from static files
+
+use v5.14;
 
 use parent 'Plack::Component';
-use Plack::Util::Accessor qw(base_dir base_uri file_types path_map 
+use Plack::Util::Accessor qw(base_dir base_uri file_types path_map
     include_index index_property namespaces);
 
 use Plack::Request;
@@ -19,20 +18,21 @@ use Scalar::Util qw(reftype);
 use URI;
 
 our %FORMATS = (
-    ttl => 'Turtle',
-    nt  => 'NTriples',
-    n3  => 'Notation3',
-    json => 'RDFJSON',
-    rdfxml => 'RDFXML'
+    ttl     => 'Turtle',
+    nt      => 'NTriples',
+    n3      => 'Notation3',
+    json    => 'RDFJSON',
+    rdfxml  => 'RDFXML'
+    # TODO: jsonld
 );
 
 sub prepare_app {
     my $self = shift;
     return if $self->{prepared};
-    
+
     die "missing base_dir" unless $self->base_dir and -d $self->base_dir;
 
-    $self->base_uri( URI->new( $self->base_uri ) ) 
+    $self->base_uri( URI->new( $self->base_uri ) )
         if $self->base_uri;
 
     my $types = join '|', @{ $self->file_types // [qw(rdfxml nt ttl)] };
@@ -75,29 +75,46 @@ sub call {
         unless -d $dir;
 
     return [ 403, [ 'Content-type' => 'text/plain' ], [ "Not accessible: $uri" ] ]
-        unless -r $dir and opendir(my $dirhandle, $dir); 
- 
+        unless -r $dir and opendir(my $dirhandle, $dir);
+
     # TODO: calculate etag (for caching and for http HEAD method) and cache $model (?)
 
 
     # combine RDF files
     my $model = RDF::Trine::Model->new;
 
-    my @files = grep { 
+    my %rdffiles = ();
+
+    my @files = grep {
         $_ =~ /\.(\w+)$/ && $1 =~ $self->file_types;
     } readdir $dirhandle;
     closedir $dirhandle;
 
+    my $size = 0;
+    my $lastmtime = 0;
     foreach my $file (@files) {
         my $parser = RDF::Trine::Parser->guess_parser_by_filename( $file );
-        $file = catfile( $dir, $file );
+        my $absfile = catfile($dir,$file);
 
-        # TODO: this may fail
-        $parser->parse_file_into_model( $uri, $file, $model );
+        my $mtime =(stat($absfile))[9];
+        my $about = $rdffiles{$file} = { mtime => $mtime };
+        $lastmtime = $mtime if $mtime > $lastmtime;
+
+        eval {
+            $parser->parse_file_into_model( $uri, $absfile, $model );
+        };
+        if ($@) {
+            $about->{error} = $@;
+        } else {
+            $about->{size} = $model->size - $size;
+            $size = $model->size;
+        }
     }
+    $env->{'rdf.files'} = \%rdffiles;
+    $env->{'rdf.files.mtime'} = $lastmtime;
+
 
     my $iter = $model->as_stream;
-
 
     # add listing on base URI
     if ( $path eq '' and $self->index_property ) {
@@ -108,8 +125,8 @@ sub call {
         foreach my $p (readdir $dirhandle) {
             next unless -d catdir( $dir, $p ) and $p !~ /^\.\.?$/;
             push @stms, statement(
-                $subject, 
-                $predicate, 
+                $subject,
+                $predicate,
                 RDF::Trine::Node::Resource->new( "$uri$p" )
             );
         }
@@ -122,15 +139,16 @@ sub call {
 
     # add axiomatic triple to empty graphs
     if ($iter->finished) {
-        $iter = RDF::Trine::Iterator::Graph->new( [ statement( 
+        $iter = RDF::Trine::Iterator::Graph->new( [ statement(
             iri($uri),
-            iri('http://www.w3.org/1999/02/22-rdf-syntax-ns#'), 
+            iri('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
             iri('http://www.w3.org/2000/01/rdf-schema#Resource')
         ) ] );
     }
 
     # TODO: do not serialize at all on request
     # $env->{'rdflow.data'} = $iter;
+    $env->{'rdf.iterator'} = $iter;
 
     # TODO: HTTP HEAD method
 
@@ -146,6 +164,8 @@ sub call {
             my $responder = shift;
             # TODO: use IO::Handle::Iterator to serialize as last as possible
             my $rdf = $ser->serialize_iterator_to_string( $iter );
+            use Encode; # must be bytes
+            $rdf = encode("UTF8",$rdf);
             $responder->( [ 200, [ @headers ], [ $rdf ] ] );
         };
     } else {
@@ -167,9 +187,9 @@ response headers.
 sub negotiate {
     my ($self, $env) = @_;
 
-    my %options = ( 
-        base       => $env->{'rdflow.uri'}, 
-        namespaces => ( $self->namespaces // { } ) 
+    my %options = (
+        base       => $env->{'rdflow.uri'},
+        namespaces => ( $self->namespaces // { } )
     );
 
     if ( $env->{'negotiate.format'} ) {
@@ -178,7 +198,7 @@ sub negotiate {
         my $format = $FORMATS{$env->{'negotiate.format'}} // $env->{'negotiate.format'};
 
         my $ser = eval { # TODO: catch RDF::Trine::Error::SerializationError and log
-            RDF::Trine::Serializer->new( $format, %options ) 
+            RDF::Trine::Serializer->new( $format, %options )
         }; # maybe rdflow.error ?
         #  push @headers,  Vary => 'Accept'; ??
 
@@ -227,7 +247,7 @@ Mandatory base directory that all resource directories are located in.
 
 =item base_uri
 
-The base URI of all resources. 
+The base URI of all resources.
 
 =item path_map
 
@@ -252,13 +272,35 @@ disabled by setting a false value.
 
 =back
 
+=head1 PSGI environment variables
+
+The following PSGI environment variables are set:
+
+=over 4
+
+=item rdf.uri
+
+=item rdf.iterator
+
+=item rdf.files
+
+An hash of source filenames, each with the number of triples (on success)
+as property C<size>, an error message as C<error> if parsing failed, and
+the timestamp of last modification as C<mtime>.
+
+=item rdf.files.mtime
+
+Maximum value of all last modification times.
+
+=back
+
 =head1 LIMITATIONS
 
 B<This module is an early developer release. Be warned!>
 
 All resource URIs to be served must have a common URI prefix (such as
 C<http://example.org/> above) and a local part that may be restricted to a
-limited set of characters. For instance the character sequence C<../> is 
+limited set of characters. For instance the character sequence C<../> is
 not allowed.
 
 =head1 NOTES
@@ -274,7 +316,12 @@ VoID descriptions could be added, possibly with L<RDF::Generator::Void>.
 
 =head1 SEE ALSO
 
+Use L<Plack::Middleware::Negotiate> to add content negotiation based on
+an URL parameter and/or suffix.
+
 See L<RDF::LinkedData> for a different module to serve RDF as linked data.
-See also L<RDF::Flow>.
+See also L<RDF::Flow> and L<RDF::Lazy> for processing RDF data.
+
+See L<http://foafpress.org/> for a similar approach in PHP.
 
 =cut
