@@ -90,14 +90,12 @@ sub call {
     closedir $dirhandle;
 
     my $size = 0;
-    my $lastmtime = 0;
     foreach my $file (@files) {
         my $parser = RDF::Trine::Parser->guess_parser_by_filename( $file );
         my $absfile = catfile($dir,$file);
 
         my $mtime =(stat($absfile))[9];
         my $about = $rdffiles{$file} = { mtime => $mtime };
-        $lastmtime = $mtime if $mtime > $lastmtime;
 
         eval {
             $parser->parse_file_into_model( $uri, $absfile, $model );
@@ -110,7 +108,6 @@ sub call {
         }
     }
     $env->{'rdf.files'} = \%rdffiles;
-    $env->{'rdf.files.mtime'} = $lastmtime; # TODO: remove?
 
 
     my $iter = $model->as_stream;
@@ -291,10 +288,6 @@ An hash of source filenames, each with the number of triples (on success)
 as property C<size>, an error message as C<error> if parsing failed, and
 the timestamp of last modification as C<mtime>. C<size> and C<error> may
 not be given before parsing, if C<rdf.iterator> is set.
-
-=item rdf.files.mtime
-
-Maximum value of all last modification times (this may be removed!).
 
 =back
 
