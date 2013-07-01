@@ -4,17 +4,18 @@ package Plack::App::RDF::Files;
 use v5.14;
 
 use parent 'Plack::Component';
-use Plack::Util::Accessor qw(base_dir base_uri file_types path_map
-    include_index index_property namespaces);
+use Plack::Util::Accessor qw(
+    base_dir base_uri file_types path_map
+    include_index index_property namespaces
+);
 
 use Plack::Request;
 use RDF::Trine qw(statement iri);
 use RDF::Trine::Model;
 use RDF::Trine::Parser;
-use RDF::Trine::Iterator::Graph;
 use RDF::Trine::Serializer;
+use RDF::Trine::Iterator::Graph;
 use File::Spec::Functions qw(catfile catdir);
-use Scalar::Util qw(reftype);
 use URI;
 
 our %FORMATS = (
@@ -23,7 +24,6 @@ our %FORMATS = (
     n3      => 'Notation3',
     json    => 'RDFJSON',
     rdfxml  => 'RDFXML'
-    # TODO: jsonld
 );
 
 sub prepare_app {
@@ -66,8 +66,7 @@ sub call {
            ( $path eq '' and !$self->include_index );
 
     my $uri = URI->new( $base . $path );
-
-    $env->{'rdf.uri'} = $uri; # TODO: document this
+    $env->{'rdf.uri'} = $uri;
 
     my $dir = catdir( $self->base_dir, $self->path_map->($path) );
 
@@ -111,7 +110,7 @@ sub call {
         }
     }
     $env->{'rdf.files'} = \%rdffiles;
-    $env->{'rdf.files.mtime'} = $lastmtime;
+    $env->{'rdf.files.mtime'} = $lastmtime; # TODO: remove?
 
 
     my $iter = $model->as_stream;
@@ -147,8 +146,6 @@ sub call {
     }
 
     # TODO: do not serialize at all on request
-    # $env->{'rdflow.data'} = $iter;
-    $env->{'rdf.iterator'} = $iter;
 
     # TODO: HTTP HEAD method
 
@@ -160,6 +157,7 @@ sub call {
     }
 
     if ( $env->{'psgi.streaming'} ) {
+        $env->{'rdf.iterator'} = $iter;
         return sub {
             my $responder = shift;
             # TODO: use IO::Handle::Iterator to serialize as last as possible
@@ -176,32 +174,27 @@ sub call {
 
 =method negotiate( $env )
 
-Selects an RDF serializer based on the PSGI environment variable
-C<negotiate.format> (see L<Plack::Middleware::Negotiate>) or the C<negotiate>
-method of L<RDF::Trine::Serializer>. Returns first a L<RDF::Trine::Serializer>
-on success or C<undef> on error) and second a (possibly empty) list of HTTP
-response headers.
+This internal methods selects an RDF serializer based on the PSGI environment 
+variable C<negotiate.format> (see L<Plack::Middleware::Negotiate>) or the 
+C<negotiate> method of L<RDF::Trine::Serializer>. Returns first a 
+L<RDF::Trine::Serializer> on success or C<undef> on error) and second a 
+(possibly empty) list of HTTP response headers.
 
 =cut
 
 sub negotiate {
     my ($self, $env) = @_;
 
-    my %options = (
-        base       => $env->{'rdflow.uri'},
-        namespaces => ( $self->namespaces // { } )
-    );
-
     if ( $env->{'negotiate.format'} ) {
-
-        # TODO: document this
-        my $format = $FORMATS{$env->{'negotiate.format'}} // $env->{'negotiate.format'};
-
-        my $ser = eval { # TODO: catch RDF::Trine::Error::SerializationError and log
-            RDF::Trine::Serializer->new( $format, %options )
-        }; # maybe rdflow.error ?
-        #  push @headers,  Vary => 'Accept'; ??
-
+		# TODO: catch RDF::Trine::Error::SerializationError and log
+        my $ser = eval {
+            RDF::Trine::Serializer->new( 
+                $FORMATS{$env->{'negotiate.format'}} // $env->{'negotiate.format'},
+                base       => $env->{'rdflow.uri'},
+                namespaces => ( $self->namespaces // { } ),
+            )
+        };
+        # TODO: push @headers, Vary => 'Accept'; ?
         return ($ser);
     } else {
         my ($ctype, $ser) = RDF::Trine::Serializer->negotiate(
@@ -270,27 +263,38 @@ RDF property to use for listing all resources connected to the base URI (if
 <include_index> is enabled).  Set to C<rdfs:seeAlso> by default. Can be
 disabled by setting a false value.
 
+=item namespaces
+
+Optional namespaces for serialization, passed to L<RDF::Trine::Serializer>.
+
 =back
 
 =head1 PSGI environment variables
 
-The following PSGI environment variables are set:
+The following PSGI environment variables are relevant:
 
 =over 4
 
 =item rdf.uri
 
+The requested URI
+
 =item rdf.iterator
+
+The L<RDF::Trine::Iterator> that will be used for serializing, if
+C<psgi.streaming> is set. One can use this variable to catch the RDF
+data in another post-processing middleware.
 
 =item rdf.files
 
 An hash of source filenames, each with the number of triples (on success)
 as property C<size>, an error message as C<error> if parsing failed, and
-the timestamp of last modification as C<mtime>.
+the timestamp of last modification as C<mtime>. C<size> and C<error> may
+not be given before parsing, if C<rdf.iterator> is set.
 
 =item rdf.files.mtime
 
-Maximum value of all last modification times.
+Maximum value of all last modification times (this may be removed!).
 
 =back
 
