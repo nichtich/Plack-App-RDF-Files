@@ -1,5 +1,5 @@
 package Plack::App::RDF::Files;
-#ABSTRACT: Serve RDF data from static files
+#ABSTRACT: Serve RDF data from files
 
 use v5.14;
 
@@ -17,6 +17,12 @@ use RDF::Trine::Serializer;
 use RDF::Trine::Iterator::Graph;
 use File::Spec::Functions qw(catfile catdir);
 use URI;
+use Scalar::Util qw(blessed reftype);
+use Carp qw(croak);
+use Digest::MD5 qw(md5_hex);
+use HTTP::Date;
+use List::Util qw(max);
+
 
 our %FORMATS = (
     ttl     => 'Turtle',
@@ -48,7 +54,71 @@ sub prepare_app {
     $self->path_map( sub { shift } ) unless $self->path_map;
 
     $self->{prepared} = 1;
+
+    $self;
 }
+
+=method files( $env | $req | $str )
+
+Get a list of RDF files that would be read for a given PSGI request (given as
+L<PSGI> environment or as L<Plack::Request>) or for the part an URI that
+follows C<base_uri> (given as string). The requested URI is saved in field
+C<rdf.uri> of the request environment.  On success returns the base directory
+and a list of files, each mapped to its last modification time.  Undef is
+returned if the request contained invalid characters (everything but
+C<a-zA-Z0-9:.@-> and the forbidden sequence C<../>) or if the request equals ro
+the base URI and C<include_index> was not enabled.
+
+=cut
+
+sub files {
+    my $self = shift;
+
+    my ($env, $req, $path);
+
+    if (!reftype($_[0])) {                                      # $str
+        return unless $self->base_uri and defined $_[0];
+        # TODO: support full URIs via HTTP::Request
+        $path = substr(shift,1);
+        $env = { };
+    } elsif (!blessed($_[0]) and reftype($_[0]) eq 'HASH') {    # $env
+        $env  = shift;
+        $req  = Plack::Request->new($env);
+        $path = substr($req->path,1);
+    } elsif (blessed($_[0]) and $_[0]->isa('Plack::Request')) { # $req
+        $req  = shift;
+        $env  = $req->env;
+        $path = substr($req->path,1);
+    } else {
+        croak "expected PSGI request or string";
+    }
+
+    return if $path !~ /^[a-z0-9:\._@-]*$/i or $path =~ /\.\.\//;
+
+    $env->{'rdf.uri'} = URI->new( ($self->base_uri // $req->base) . $path );
+
+    return if $path eq '' and !$self->include_index;
+    
+    my $dir = catdir( $self->base_dir, $self->path_map->($path) );
+
+    return unless -d $dir;
+    return ($dir) unless -r $dir and opendir(my $dh, $dir);
+
+    my $files = { };
+    while( readdir $dh ) {
+        next if $_ !~ /\.(\w+)$/ || $1 !~ $self->file_types;
+        my $full = catfile( $dir, $_ );
+        $files->{$_} = {
+            full  => $full,
+            size  => (stat($full))[7],
+            mtime => (stat($full))[9],
+        }
+    }
+    closedir $dh;
+
+    return ( $dir => $files );
+}
+
 
 sub call {
     my ($self, $env) = @_;
@@ -57,63 +127,58 @@ sub call {
     return [ 405, [ 'Content-type' => 'text/plain' ], [ 'Method not allowed' ] ]
         unless (($req->method eq 'GET') || ($req->method eq 'HEAD'));
 
-    my $base = $self->base_uri // $req->base;
-    my $path = substr($req->path,1);
+    my ($dir, $files) = $self->files( $req );
 
-    # TODO: configure allowed characters
-    return [ 404, [ 'Content-type' => 'text/plain' ], [ "Not found" ] ]
-        if $path !~ /^[a-z0-9:\._@-]*$/i or $path =~ /\.\.\// or
-           ( $path eq '' and !$self->include_index );
+    if (!$files) {
+        my $status  = 404;
+        my $message = $req->env->{'rdf.uri'} 
+                    ? "Not found: " . $req->env->{'rdf.uri'} : "Not found";
 
-    my $uri = URI->new( $base . $path );
-    $env->{'rdf.uri'} = $uri;
+        if ($dir and -d $dir) {
+            $status = 404;
+            $message =~ s/found/accesible/;
+        }
 
-    my $dir = catdir( $self->base_dir, $self->path_map->($path) );
+        return [ $status, [ 'Content-type' => 'text/plain' ], [ $message ] ];
+    }
 
-    return [ 404, [ 'Content-type' => 'text/plain' ], [ "Not found: $uri" ] ]
-        unless -d $dir;
+    my $uri = $env->{'rdf.uri'};
+    my @headers;
 
-    return [ 403, [ 'Content-type' => 'text/plain' ], [ "Not accessible: $uri" ] ]
-        unless -r $dir and opendir(my $dirhandle, $dir);
+    # TODO: show example with Plack::Middleware::ConditionalGET
 
-    # TODO: calculate etag (for caching and for http HEAD method) and cache $model (?)
+    my $md5 = md5_hex( map { values %{$_} } values %$files );
+    push @headers, ETag => "W/\"$md5\"";
 
+    my $lastmod = max map { $_->{mtime} } values %$files;
+    push @headers, 'Last-Modified' => HTTP::Date::time2str($lastmod) if $lastmod;
 
-    # combine RDF files
+    # TODO: HEAD method
+    
+    # parse RDF
+    
     my $model = RDF::Trine::Model->new;
+    my $triples = 0;
+    foreach (keys %$files) { # TODO: parse sorted by modifcation time?
+        my $file = $files->{$_};
 
-    my %rdffiles = ();
-
-    my @files = grep {
-        $_ =~ /\.(\w+)$/ && $1 =~ $self->file_types;
-    } readdir $dirhandle;
-    closedir $dirhandle;
-
-    my $size = 0;
-    foreach my $file (@files) {
-        my $parser = RDF::Trine::Parser->guess_parser_by_filename( $file );
-        my $absfile = catfile($dir,$file);
-
-        my $mtime =(stat($absfile))[9];
-        my $about = $rdffiles{$file} = { mtime => $mtime };
-
+        my $parser = RDF::Trine::Parser->guess_parser_by_filename( $file->{full} );
         eval {
-            $parser->parse_file_into_model( $uri, $absfile, $model );
+            $parser->parse_file_into_model( $uri, $file->{full}, $model );
         };
         if ($@) {
-            $about->{error} = $@;
+            $file->{error} = $@;
         } else {
-            $about->{size} = $model->size - $size;
-            $size = $model->size;
+            $file->{triples} = $model->size - $triples;
+            $triples = $model->size;
         }
     }
-    $env->{'rdf.files'} = \%rdffiles;
-
+    $env->{'rdf.files'} = $files;
 
     my $iter = $model->as_stream;
 
     # add listing on base URI
-    if ( $path eq '' and $self->index_property ) {
+    if ( $self->index_property and "$uri" eq ($self->base_uri // $req->base) ) {
         my $subject   = iri( $uri );
         my $predicate = $self->index_property;
         my @stms;
@@ -147,7 +212,9 @@ sub call {
     # TODO: HTTP HEAD method
 
     # negotiate and serialize
-    my ($ser, @headers) = $self->negotiate( $env, $uri );
+    my ($ser, @h) = $self->negotiate( $env, $uri );
+    push @headers, @h;
+
     if (!$ser) {
         $ser = RDF::Trine::Serializer->new( 'NTriples', base_uri => $uri );
         @headers = ('Content-type' => 'text/plain');

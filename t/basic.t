@@ -1,4 +1,4 @@
-use strict;
+use v5.14.1;
 use Test::More;
 use Plack::Test;
 use Plack::Builder;
@@ -38,5 +38,30 @@ test_psgi $app, sub {
 #    $app;
 #};
 #$stack->call(...)
+
+=head1
+$app = Plack::App::RDF::Files->new( base_dir => 't' );
+
+test_psgi $app, sub {
+	my $cb  = shift;
+
+	my $res = $cb->(GET "/rdf1", Accept => 'text/turtle'); 
+	is $res->code, '200', '200 OK';
+    is $res->header('Content-Type'), 'text/turtle', 'text/turtle';
+
+    foreach my $missing ("/rdf0", "/", "../t/rdf1") {
+    	my $res = $cb->(GET $missing, Accept => 'text/turtle'); 
+	    is $res->code, '404', '404 not ok';
+    }
+};
+
+$app = Plack::App::RDF::Files->new( base_dir => 't', include_index => 1 );
+
+test_psgi $app, sub {
+	my $cb  = shift;
+	my $res = $cb->(GET "/", Accept => 'text/turtle'); 
+	is $res->code, '200', '200 OK';
+};
+=cut
 
 done_testing;
