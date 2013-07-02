@@ -60,9 +60,9 @@ sub prepare_app {
 
 =method files( $env | $req | $str )
 
-Get a list of RDF files that would be read for a given PSGI request (given as
-L<PSGI> environment or as L<Plack::Request>) or for the part an URI that
-follows C<base_uri> (given as string). The requested URI is saved in field
+Get a list of RDF files that will be read for a given request. The request can
+be specified as L<PSGI> environment, as L<Plack::Request>, or as partial URI
+that follows C<base_uri> (given as string). The requested URI is saved in field
 C<rdf.uri> of the request environment.  On success returns the base directory
 and a list of files, each mapped to its last modification time.  Undef is
 returned if the request contained invalid characters (everything but
@@ -93,12 +93,12 @@ sub files {
         croak "expected PSGI request or string";
     }
 
-    return if $path !~ /^[a-z0-9:\._@-]*$/i or $path =~ /\.\.\//;
+    return if $path !~ /^[a-z0-9:\._@\/-]*$/i or $path =~ /\.\.\/|^\//;
 
     $env->{'rdf.uri'} = URI->new( ($self->base_uri // $req->base) . $path );
 
     return if $path eq '' and !$self->include_index;
-    
+
     my $dir = catdir( $self->base_dir, $self->path_map->($path) );
 
     return unless -d $dir;
@@ -131,7 +131,7 @@ sub call {
 
     if (!$files) {
         my $status  = 404;
-        my $message = $req->env->{'rdf.uri'} 
+        my $message = $req->env->{'rdf.uri'}
                     ? "Not found: " . $req->env->{'rdf.uri'} : "Not found";
 
         if ($dir and -d $dir) {
@@ -154,9 +154,8 @@ sub call {
     push @headers, 'Last-Modified' => HTTP::Date::time2str($lastmod) if $lastmod;
 
     # TODO: HEAD method
-    
+
     # parse RDF
-    
     my $model = RDF::Trine::Model->new;
     my $triples = 0;
     foreach (keys %$files) { # TODO: parse sorted by modifcation time?
@@ -196,7 +195,6 @@ sub call {
         my $i2 = RDF::Trine::Iterator::Graph->new( \@stms );
         $iter = $iter->concat( $i2 );
     }
-
 
     # add axiomatic triple to empty graphs
     if ($iter->finished) {
@@ -271,28 +269,22 @@ sub negotiate {
 
 1;
 
+=head1 SYNOPSIS
+
+    my $app = Plack::App::RDF::Files->new(
+        base_dir => '/var/rdf/
+    );
+
+    # Requests URI            =>  RDF files
+    # http://example.org/     =>  /path/to/rdf/*.(nt|ttl|rdfxml)
+    # http://example.org/foo  =>  /path/to/rdf/foo/*.(nt|ttl|rdfxml)
+    # http://example.org/x/y  =>  /path/to/rdf/x/y/*.(nt|ttl|rdfxml)
+
 =head1 DESCRIPTION
 
-This L<Plack> application serves RDF from static files. In short, each RDF
-resource to be served corresponds to a directory in the file system, located in
-a common based directory C<base_dir>. All RDF resources must share a common
-base URI, which is either taken from the L<PSGI> request or configured with
-C<base_uri>.
-
-=head2 EXAMPLE
-
-Let's assume you have a base directory C</var/rdf/> with some subdirectories
-C<foo>, C<bar>, and C<doz>. Given a base URI, such as <http://example.org/>, an
-instance of Plack::App::RDF::Files will serve RDF data for the following URIs:
-
-    http://example.org/
-    http://example.org/foo
-    http://example.org/bar
-    http://example.org/doz
-
-The actual RDF data is collected and combined from RDF files (C<*.nt>,
-C<*.ttl>, C<*.rdfxml>...) in each directory. There is no need to set up a
-triple store, just create and modify directories and RDF files.
+This L<PSGI> application serves RDF from files. Each accessible RDF resource
+corresponds to a (sub)directory, located in a common based directory. All RDF
+files in a directory are merged and returned as RDF graph.
 
 =head1 CONFIGURATION
 
@@ -304,12 +296,8 @@ Mandatory base directory that all resource directories are located in.
 
 =item base_uri
 
-The base URI of all resources.
-
-=item path_map
-
-Optional code reference that maps a local part of an URI to a relative
-directory. Set to the identity mapping by default.
+The base URI of all resources. If no base URI has been specified, the
+base URI is taken from the PSGI request.
 
 =item file_types
 
@@ -326,6 +314,11 @@ directory. Enable this option to also serve RDF data from this location.
 RDF property to use for listing all resources connected to the base URI (if
 <include_index> is enabled).  Set to C<rdfs:seeAlso> by default. Can be
 disabled by setting a false value.
+
+=item path_map
+
+Optional code reference that maps a local part of an URI to a relative
+directory. Set to the identity mapping by default.
 
 =item namespaces
 
