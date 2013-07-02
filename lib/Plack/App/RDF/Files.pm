@@ -66,8 +66,9 @@ that follows C<base_uri> (given as string). The requested URI is saved in field
 C<rdf.uri> of the request environment.  On success returns the base directory
 and a list of files, each mapped to its last modification time.  Undef is
 returned if the request contained invalid characters (everything but
-C<a-zA-Z0-9:.@-> and the forbidden sequence C<../>) or if the request equals ro
-the base URI and C<include_index> was not enabled.
+C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../> or a sequence starting with
+C</>) or if the request equals ro the base URI and C<include_index> was not
+enabled.
 
 =cut
 
@@ -119,6 +120,38 @@ sub files {
     return ( $dir => $files );
 }
 
+=method call( $env )
+
+Core method of the PSGI application.
+
+The following PSGI environment variables are read and/or set by the
+application.
+
+=over 4
+
+=item rdf.uri
+
+The requested URI
+
+=item rdf.iterator
+
+The L<RDF::Trine::Iterator> that will be used for serializing, if
+C<psgi.streaming> is set. One can use this variable to catch the RDF
+data in another post-processing middleware.
+
+=item rdf.files
+
+An hash of source filenames, each with the number of triples (on success)
+as property C<size>, an error message as C<error> if parsing failed, and
+the timestamp of last modification as C<mtime>. C<size> and C<error> may
+not be given before parsing, if C<rdf.iterator> is set.
+
+=back
+
+If an existing resource does not contain triples, the axiomatic triple
+C<< $uri rdf:type rdfs:Resource >> is returned.
+
+=cut
 
 sub call {
     my ($self, $env) = @_;
@@ -272,7 +305,7 @@ sub negotiate {
 =head1 SYNOPSIS
 
     my $app = Plack::App::RDF::Files->new(
-        base_dir => '/var/rdf/
+        base_dir => '/path/to/rdf/
     );
 
     # Requests URI            =>  RDF files
@@ -325,51 +358,6 @@ directory. Set to the identity mapping by default.
 Optional namespaces for serialization, passed to L<RDF::Trine::Serializer>.
 
 =back
-
-=head1 PSGI environment variables
-
-The following PSGI environment variables are relevant:
-
-=over 4
-
-=item rdf.uri
-
-The requested URI
-
-=item rdf.iterator
-
-The L<RDF::Trine::Iterator> that will be used for serializing, if
-C<psgi.streaming> is set. One can use this variable to catch the RDF
-data in another post-processing middleware.
-
-=item rdf.files
-
-An hash of source filenames, each with the number of triples (on success)
-as property C<size>, an error message as C<error> if parsing failed, and
-the timestamp of last modification as C<mtime>. C<size> and C<error> may
-not be given before parsing, if C<rdf.iterator> is set.
-
-=back
-
-=head1 LIMITATIONS
-
-B<This module is an early developer release. Be warned!>
-
-All resource URIs to be served must have a common URI prefix (such as
-C<http://example.org/> above) and a local part that may be restricted to a
-limited set of characters. For instance the character sequence C<../> is
-not allowed.
-
-=head1 NOTES
-
-If an existing resource does not contain triples, the axiomatic triple
-C<< ?uri rdf:type rdfs:Resource >> is returned.
-
-To update the files, add a middleware that catches 404 and 202 responses.
-
-=head1 TODO
-
-VoID descriptions could be added, possibly with L<RDF::Generator::Void>.
 
 =head1 SEE ALSO
 
