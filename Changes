@@ -1,7 +1,9 @@
 # Changelog for Plack-App-RDF-Files
 
 {{$NEXT}}
-    - migrated to Dist::Milla
+    - migrated to Dist::Milla and Moo
+    - major code cleanup and refactoring
+    - add HTTP HEAD and conditional GET
 
 0.02  2013-07-02
     - new method: files

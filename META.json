@@ -38,9 +38,15 @@
       "runtime" : {
          "requires" : {
             "HTTP::Date" : "0",
+            "Moo" : "0",
             "Plack" : "0",
             "RDF::Trine" : "0",
             "perl" : "v5.10.0"
+         }
+      },
+      "test" : {
+         "requires" : {
+            "HTTP::Request::Common" : "0"
          }
       }
    },

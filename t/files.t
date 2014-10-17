@@ -6,66 +6,55 @@ use HTTP::Request;
 
 use Plack::App::RDF::Files;
 
-test_files(
-    { base_dir => './t/data', base_uri => 'http://example.org/', include_index => 1 },
-    [ GET => 'http://example.org/' ],
-   't/data' => { },
-);
+my $alice_files = {
+    'file1.ttl' => {
+        location => 't/data/alice',
+          size   => (stat 't/data/alice/file1.ttl')[7],
+          mtime  => (stat 't/data/alice/file1.ttl')[9],
+    }
+};
 
-test_files(
+my @tests = (
+  [
+    { base_dir => './t/data', base_uri => 'http://example.org/', index_property => 1 },
+    [ GET => 'http://example.org/' ],
+    { },
+  ],
+  [
     { base_dir => './t/data', base_uri => 'http://example.org/' },
     [ GET => 'http://example.org/' ],
    undef
-);
-
-test_files(
+  ],
+  [
     { base_dir => './t/data', base_uri => 'http://example.org/' },
     [ GET => '/alice' ],
-   't/data/alice' => { },
-);
-
-test_files(
-    { base_dir => './t/data', base_uri => 'http://example.org/' },
-    '/alice',
-   't/data/alice' => { },
-);
-
-test_files(
+    $alice_files,
+  ],
+  [
     { base_dir => './t/data' },
     [ GET => 'http://example.com/alice' ],
-   't/data/alice' => { },
+   $alice_files,
+  ]
 );
 
 
-sub test_files {
-    my $app = Plack::App::RDF::Files->new( %{(shift)} )->prepare_app;
-    my $req = shift;
-    my @result = @_;
+foreach my $test (@tests) {
+    my $app = Plack::App::RDF::Files->new( %{$test->[0]} );
+    my $req = HTTP::Request->new(@{$test->[1]});
+    my $env = req_to_psgi($req);
 
-    my $check = sub {
-        my ($dir, $files) = @_;
-
-        #use Data::Dumper;
-        #say Dumper( [ $dir, $files ] );
-
-        is( $dir, $result[0], defined $dir ? 'found' : 'not found' ); 
-
-        # TODO: check files
-    };
-
-    if (ref $req) {
-        $req = HTTP::Request->new( @$req  );
-        my $env = req_to_psgi( $req );
-        $check->( $app->files( $env ) );
-        my $uri = $req->uri;
-        if ($uri !~ /^http:/) {
-            $uri = $app->base_uri . substr($uri,1);
-        }
-        is( $env->{'rdf.uri'}, $uri, $uri );
+    my $files = $app->files($env);
+    if (defined $files) {
+        is_deeply $files, $test->[2];
     } else {
-        my $path = $req;
-        $check->( $app->files( $path ) );
+        is undef, $test->[2], 'no files found';
     }
+
+    my $uri = $req->uri;
+    if ($uri !~ /^http:/) {
+        $uri = $app->base_uri . substr($uri,1);
+    }
+    is $env->{'rdf.uri'}, $uri, "rdf.uri = $uri";
 }
 
 done_testing;

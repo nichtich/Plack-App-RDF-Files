@@ -4,18 +4,16 @@ use warnings;
 use v5.10;
 
 use parent 'Plack::Component';
-use Plack::Util::Accessor qw(
-    base_dir base_uri file_types path_map
-    include_index index_property namespaces
-);
-
+use Plack::Util;
 use Plack::Request;
+use Plack::Middleware::ConditionalGET;
+
 use RDF::Trine qw(statement iri);
 use File::Spec::Functions qw(catfile catdir);
 use URI;
 use Scalar::Util qw(blessed reftype);
 use Carp qw(croak);
-use Digest::MD5 qw(md5_hex);
+use Digest::MD5;
 use HTTP::Date;
 use List::Util qw(max);
 
@@ -29,124 +27,137 @@ our %FORMATS = (
     rdfxml  => 'RDFXML'
 );
 
-sub prepare_app {
-    my $self = shift;
-    return if $self->{prepared};
+use Moo;
 
-    die "missing base_dir" unless $self->base_dir and -d $self->base_dir;
+has base_dir => (
+    is => 'ro', required => 1,
+    isa => sub { die "base_dir not found" unless -d $_[0] },
+);
 
-    $self->base_uri( URI->new( $self->base_uri ) )
-        if $self->base_uri;
+has base_uri => (
+    is => 'ro', coerce => sub { URI->new($_[0]) },
+);
 
-    my $types = join '|', @{ $self->file_types // [qw(rdfxml nt ttl)] };
-    $self->file_types( qr/^($types)/ );
+has file_types => (
+    is => 'ro', 
+    default => sub { [qw(rdfxml nt ttl)] },
+    coerce  => sub { 
+        my $types = join '|', @{$_[0]}; qr/^($types)$/;
+    },
+);
 
-    if ( $self->include_index ) {
-        $self->index_property( 'http://www.w3.org/2000/01/rdf-schema#seeAlso' )
-            unless defined $self->index_property;
-        $self->index_property( iri( $self->index_property ) )
-            if $self->index_property;
-    }
+has path_map => (
+    is => 'ro', default => sub { sub { $_[0] } }
+);
 
-    $self->path_map( sub { shift } ) unless $self->path_map;
+has index_property => (
+    is => 'ro', 
+    coerce => sub {
+        $_[0] ? 
+        iri($_[0] == 1 ? 'http://www.w3.org/2000/01/rdf-schema#seeAlso' : $_[0])
+        : undef
+    },
+);
 
-    $self->{prepared} = 1;
-
-    $self;
-}
+has namespaces => (
+    is => 'ro'
+);
 
 sub files {
-    my $self = shift;
-
-    my ($env, $req, $path);
-
-    if (!reftype($_[0])) {                                      # $str
-        return unless $self->base_uri and defined $_[0];
-        # TODO: support full URIs via HTTP::Request
-        $path = substr(shift,1);
-        $env = { };
-    } elsif (!blessed($_[0]) and reftype($_[0]) eq 'HASH') {    # $env
-        $env  = shift;
-        $req  = Plack::Request->new($env);
-        $path = substr($req->path,1);
-    } elsif (blessed($_[0]) and $_[0]->isa('Plack::Request')) { # $req
-        $req  = shift;
-        $env  = $req->env;
-        $path = substr($req->path,1);
-    } else {
-        croak "expected PSGI request or string";
-    }
+    my ($self, $env) = @_;
+    my $req  = Plack::Request->new($env);
+    my $path = substr($req->path,1);
 
     return if $path !~ /^[a-z0-9:\._@\/-]*$/i or $path =~ /\.\.\/|^\//;
 
+    # TODO: what if already set?
     $env->{'rdf.uri'} = URI->new( ($self->base_uri // $req->base) . $path );
 
-    return if $path eq '' and !$self->include_index;
+    return if $path eq '' and !$self->index_property;
+
 
     my $dir = catdir( $self->base_dir, $self->path_map->($path) );
 
     return unless -d $dir;
-    return ($dir) unless -r $dir and opendir(my $dh, $dir);
+    return unless -r $dir and opendir(my $dh, $dir);
 
     my $files = { };
-    while( readdir $dh ) {
-        next if $_ !~ /\.(\w+)$/ || $1 !~ $self->file_types;
-        my $full = catfile( $dir, $_ );
+    while ( readdir $dh ) {
+        next if $_ !~ /\.(\w+)$/;
+        next if $1 !~ $self->file_types;
+
+        my @stat = stat(catfile($dir,$_));
         $files->{$_} = {
-            full  => $full,
-            size  => (stat($full))[7],
-            mtime => (stat($full))[9],
+            location => $dir,
+            size     => $stat[7],
+            mtime    => $stat[9],
         }
     }
     closedir $dh;
 
-    return ( $dir => $files );
+    return $files;
 }
 
 sub call {
     my ($self, $env) = @_;
     my $req = Plack::Request->new($env);
 
-    return [ 405, [ 'Content-type' => 'text/plain' ], [ 'Method not allowed' ] ]
+    return [405, ['Content-type' => 'text/plain'], ['Method not allowed']]
         unless (($req->method eq 'GET') || ($req->method eq 'HEAD'));
 
-    my ($dir, $files) = $self->files( $req );
+    # get RDF files
+    my $files = $self->files($env);
+    return [404, ['Content-type' => 'text/plain'], ['Not found']]
+        unless $files;
 
-    if (!$files) {
-        my $status  = 404;
-        my $message = $req->env->{'rdf.uri'}
-                    ? "Not found: " . $req->env->{'rdf.uri'} : "Not found";
+    my $headers = $self->headers($files);
+    my $uri = $env->{'rdf.uri'};
 
-        if ($dir and -d $dir) {
-            $status = 404;
-            $message =~ s/found/accesible/;
+    # negotiate serialization format
+    my $serializer;
+    eval {
+        my %options = (
+            base_url   => $env->{'rdf.uri'},
+            namespaces => $self->namespaces // { },
+        );
+        if ( $env->{'negotiate.format'} ) {
+            my $format = $FORMATS{$env->{'negotiate.format'}} 
+                         // $env->{'negotiate.format'};
+            $serializer = RDF::Trine::Serializer->new($format, %options);
+        } else {
+            my $type;
+            ($type, $serializer) = RDF::Trine::Serializer->negotiate(
+                request_headers => $req->headers, %options );
+            $headers->set('Content-type' => $type);
+            $headers->set( Vary => 'Accept');
         }
-
-        return [ $status, [ 'Content-type' => 'text/plain' ], [ $message ] ];
+    };
+    if ($@ or !$serializer) { # RDF::Trine::Error::SerializationError
+        $serializer = RDF::Trine::Serializer->new('NTriples', base_uri => $uri);
+        $headers->set('Content-type' => 'text/plain');
     }
 
-    my $uri = $env->{'rdf.uri'};
-    my @headers;
+    # don't bother parsing and serializing on HEAD request or conditional GET
+    # (this implies these requests will not detect RDF parsing errors)
+    if ( Plack::Middleware::ConditionalGET->etag_matches($headers, $env) ||
+         Plack::Middleware::ConditionalGET->not_modified_since($headers, $env) ) {
+         return [304, $headers->headers, []];
+    }
 
-    # TODO: show example with Plack::Middleware::ConditionalGET
+    if ($req->method eq 'HEAD') {
+        return [200, $headers->headers, []];
+    }
 
-    my $md5 = md5_hex( map { values %{$_} } values %$files );
-    push @headers, ETag => "W/\"$md5\"";
-
-    my $lastmod = max map { $_->{mtime} } values %$files;
-    push @headers, 'Last-Modified' => HTTP::Date::time2str($lastmod) if $lastmod;
-
-    # TODO: HEAD method
 
     # parse RDF
     my $model = RDF::Trine::Model->new;
     my $triples = 0;
-    foreach (keys %$files) { # TODO: parse sorted by modifcation time?
-        my $file = $files->{$_};
 
-        my $parser = RDF::Trine::Parser->guess_parser_by_filename( $file->{full} );
+    while (my ($name, $file) = each %$files) {
+        my $fullname = catdir($file->{location},$name);
+        my $parser = RDF::Trine::Parser->guess_parser_by_filename( $fullname );
         eval {
-            $parser->parse_file_into_model( $uri, $file->{full}, $model );
+            $parser->parse_file_into_model( $uri, $fullname, $model );
         };
         if ($@) {
             $file->{error} = $@;
@@ -157,13 +168,15 @@ sub call {
     }
     $env->{'rdf.files'} = $files;
 
-    my $iter = $model->as_stream;
+    my $iterator = $model->as_stream;
 
-    # add listing on base URI
+    # add listing on base URI (TODO)
+=head1
     if ( $self->index_property and "$uri" eq ($self->base_uri // $req->base) ) {
         my $subject   = iri( $uri );
         my $predicate = $self->index_property;
         my @stms;
+        # TODO
         opendir(my $dirhandle, $dir);
         foreach my $p (readdir $dirhandle) {
             next unless -d catdir( $dir, $p ) and $p !~ /^\.\.?$/;
@@ -176,68 +189,54 @@ sub call {
         closedir $dirhandle;
 
         my $i2 = RDF::Trine::Iterator::Graph->new( \@stms );
-        $iter = $iter->concat( $i2 );
+        $iterator = $iterator->concat( $i2 );
     }
+=cut
 
-    # add axiomatic triple to empty graphs
-    if ($iter->finished) {
-        $iter = RDF::Trine::Iterator::Graph->new( [ statement(
+    # add axiomatic triple to empty graphs (TODO: inly if configured)
+    if ($iterator->finished) {
+        $iterator = RDF::Trine::Iterator::Graph->new( [ statement(
             iri($uri),
             iri('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),
             iri('http://www.w3.org/2000/01/rdf-schema#Resource')
         ) ] );
     }
 
-    # TODO: do not serialize at all on request
+    #print STDERR "$serializer\n";
 
-    # TODO: HTTP HEAD method
-
-    # negotiate and serialize
-    my ($ser, @h) = $self->negotiate( $env, $uri );
-    push @headers, @h;
-
-    if (!$ser) {
-        $ser = RDF::Trine::Serializer->new( 'NTriples', base_uri => $uri );
-        @headers = ('Content-type' => 'text/plain');
-    }
-
+    # construct PSGI response
     if ( $env->{'psgi.streaming'} ) {
-        $env->{'rdf.iterator'} = $iter;
+        $env->{'rdf.iterator'} = $iterator;
         return sub {
             my $responder = shift;
             # TODO: use IO::Handle::Iterator to serialize as last as possible
-            my $rdf = $ser->serialize_iterator_to_string( $iter );
+            my $rdf = $serializer->serialize_iterator_to_string( $env->{'rdf.iterator'} );
             use Encode; # must be bytes
-            $rdf = encode("UTF8",$rdf);
-            $responder->( [ 200, [ @headers ], [ $rdf ] ] );
+            $rdf = encode("UTF8",$rdf); # TODO: check
+            $responder->( [ 200, $headers->headers, [ $rdf ] ] );
         };
     } else {
-        my $rdf = $ser->serialize_iterator_to_string( $iter );
-        return [200, [ @headers ], [ $rdf ] ];
+        my $rdf = $serializer->serialize_iterator_to_string( $iterator );
+        return [ 200, $headers->headers, [ $rdf ] ];
     }
 }
 
-sub negotiate {
-    my ($self, $env) = @_;
+sub headers {
+    my ($self, $files) = @_;
 
-    if ( $env->{'negotiate.format'} ) {
-		# TODO: catch RDF::Trine::Error::SerializationError and log
-        my $ser = eval {
-            RDF::Trine::Serializer->new( 
-                $FORMATS{$env->{'negotiate.format'}} // $env->{'negotiate.format'},
-                base       => $env->{'rdflow.uri'},
-                namespaces => ( $self->namespaces // { } ),
-            )
-        };
-        # TODO: push @headers, Vary => 'Accept'; ?
-        return ($ser);
-    } else {
-        my ($ctype, $ser) = RDF::Trine::Serializer->negotiate(
-            request_headers => Plack::Request->new($env)->headers,
-        );
-        my @headers = ( 'Content-type' => $ctype, Vary => 'Accept' );
-        return ($ser, @headers);
+    # calculate Etag based on file names, locations, sizes, and mtimes
+    my $md5 = Digest::MD5->new;
+    foreach my $name (sort keys %$files) {
+        $md5->add( map { $files->{$name}->{$_} } sort keys %{$files->{$name}} );
     }
+
+    # get last modification time
+    my $lastmod = max map { $_->{mtime} } values %$files;
+
+    Plack::Util::headers([
+        'ETag' => 'W/"'.$md5->hexdigest.'"',
+        'Last-Modified' => HTTP::Date::time2str($lastmod)
+    ]);
 }
 
 1;
@@ -274,6 +273,9 @@ This L<PSGI> application serves RDF from files. Each accessible RDF resource
 corresponds to a (sub)directory, located in a common based directory. All RDF
 files in a directory are merged and returned as RDF graph.
 
+HTTP HEAD and conditional GET requests are supported by ETag and
+Last-Modified-Headers (see also L<Plack::Middleware::ConditionalGET>).
+
 =head1 CONFIGURATION
 
 =over 4
@@ -289,19 +291,18 @@ base URI is taken from the PSGI request.
 
 =item file_types
 
-An array of RDF file types (extensions) to look for. Set to
+An array of RDF file types, given as extensions to look for. Set to
 C<['rdfxml','nt','ttl']> by default.
 
-=item include_index
+=item index_property
 
 By default a HTTP 404 error is returned if one tries to access the base
 directory. Enable this option to also serve RDF data from this location.
 
-=item index_property
-
 RDF property to use for listing all resources connected to the base URI (if
-<include_index> is enabled).  Set to C<rdfs:seeAlso> by default. Can be
-disabled by setting a false value.
+<include_index> is enabled).  Set to C<rdfs:seeAlso> if set to 1.
+
+I<This feature is currently disabled>
 
 =item path_map
 
@@ -315,18 +316,6 @@ Optional namespaces for serialization, passed to L<RDF::Trine::Serializer>.
 =back
 
 =head1 METHODS
-
-=head2 files( $env | $req | $str )
-
-Get a list of RDF files that will be read for a given request. The request can
-be specified as L<PSGI> environment, as L<Plack::Request>, or as partial URI
-that follows C<base_uri> (given as string). The requested URI is saved in field
-C<rdf.uri> of the request environment.  On success returns the base directory
-and a list of files, each mapped to its last modification time.  Undef is
-returned if the request contained invalid characters (everything but
-C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../> or a sequence starting with
-C</>) or if the request equals ro the base URI and C<include_index> was not
-enabled.
 
 =head2 call( $env )
 
@@ -359,13 +348,23 @@ not be given before parsing, if C<rdf.iterator> is set.
 If an existing resource does not contain triples, the axiomatic triple
 C<< $uri rdf:type rdfs:Resource >> is returned.
 
-=head2 negotiate( $env )
+=head2 files( $env )
 
-This internal methods selects an RDF serializer based on the PSGI environment 
-variable C<negotiate.format> (see L<Plack::Middleware::Negotiate>) or the 
-C<negotiate> method of L<RDF::Trine::Serializer>. Returns first a 
-L<RDF::Trine::Serializer> on success or C<undef> on error) and second a 
-(possibly empty) list of HTTP response headers.
+Get a list of RDF files (as hash reference) that will be read for a given
+request, given as L<PSGI> environment.
+
+The requested URI is saved in field C<rdf.uri> of the request environment.  On
+success returns the base directory and a list of files, each mapped to its last
+modification time.  Undef is returned if the request contained invalid
+characters (everything but C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../>
+or a sequence starting with C</>) or if the request equals ro the base URI and
+C<include_index> was not enabled.
+
+=head2 headers 
+
+Get a response headers object (as provided by L<Plack::Util>::headers) with
+ETag and Last-Modified from a list of RDF files given as returned by the files
+method.
 
 =head1 SEE ALSO
 
