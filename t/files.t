@@ -1,4 +1,5 @@
-use v5.14.1;
+use strict;
+use warnings;
 use Test::More;
 use HTTP::Message::PSGI;
 use HTTP::Request;

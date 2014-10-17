@@ -1,4 +1,5 @@
-use v5.14.1;
+use strict;
+use warnings;
 use Test::More;
 use Plack::Test;
 use Plack::Builder;

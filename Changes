@@ -1,0 +1,10 @@
+# Changelog for Plack-App-RDF-Files
+
+{{$NEXT}}
+    - migrated to Dist::Milla
+
+0.02  2013-07-02
+    - new method: files
+
+0.01  2013-07-01
+    - initial release

@@ -11,10 +11,6 @@ use Plack::Util::Accessor qw(
 
 use Plack::Request;
 use RDF::Trine qw(statement iri);
-use RDF::Trine::Model;
-use RDF::Trine::Parser;
-use RDF::Trine::Serializer;
-use RDF::Trine::Iterator::Graph;
 use File::Spec::Functions qw(catfile catdir);
 use URI;
 use Scalar::Util qw(blessed reftype);
@@ -23,7 +19,7 @@ use Digest::MD5 qw(md5_hex);
 use HTTP::Date;
 use List::Util qw(max);
 
-our $VERSION = '0.02';
+our $VERSION = '0.10';
 
 our %FORMATS = (
     ttl     => 'Turtle',
@@ -250,7 +246,17 @@ __END__
 =head1 NAME
  
 Plack::App::RDF::Files - serve RDF data from files
- 
+
+=begin markdown
+
+# STATUS
+
+[![Build Status](https://travis-ci.org/nichtich/Plack-App-RDF-Files.png)](https://travis-ci.org/nichtich/Plack-App-RDF-Files)
+[![Coverage Status](https://coveralls.io/repos/nichtich/Plack-App-RDF-Files/badge.png)](https://coveralls.io/r/nichtich/Plack-App-RDF-Files)
+[![Kwalitee Score](http://cpants.cpanauthors.org/dist/Plack-App-RDF-Files.png)](http://cpants.cpanauthors.org/dist/Plack-App-RDF-Files)
+
+=end markdown
+
 =head1 SYNOPSIS
 
     my $app = Plack::App::RDF::Files->new(
