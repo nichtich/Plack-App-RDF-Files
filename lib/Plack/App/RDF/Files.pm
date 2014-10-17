@@ -1,7 +1,7 @@
 package Plack::App::RDF::Files;
-#ABSTRACT: Serve RDF data from files
-
-use v5.14;
+use strict;
+use warnings;
+use v5.10;
 
 use parent 'Plack::Component';
 use Plack::Util::Accessor qw(
@@ -23,6 +23,7 @@ use Digest::MD5 qw(md5_hex);
 use HTTP::Date;
 use List::Util qw(max);
 
+our $VERSION = '0.02';
 
 our %FORMATS = (
     ttl     => 'Turtle',
@@ -57,20 +58,6 @@ sub prepare_app {
 
     $self;
 }
-
-=method files( $env | $req | $str )
-
-Get a list of RDF files that will be read for a given request. The request can
-be specified as L<PSGI> environment, as L<Plack::Request>, or as partial URI
-that follows C<base_uri> (given as string). The requested URI is saved in field
-C<rdf.uri> of the request environment.  On success returns the base directory
-and a list of files, each mapped to its last modification time.  Undef is
-returned if the request contained invalid characters (everything but
-C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../> or a sequence starting with
-C</>) or if the request equals ro the base URI and C<include_index> was not
-enabled.
-
-=cut
 
 sub files {
     my $self = shift;
@@ -119,39 +106,6 @@ sub files {
 
     return ( $dir => $files );
 }
-
-=method call( $env )
-
-Core method of the PSGI application.
-
-The following PSGI environment variables are read and/or set by the
-application.
-
-=over 4
-
-=item rdf.uri
-
-The requested URI
-
-=item rdf.iterator
-
-The L<RDF::Trine::Iterator> that will be used for serializing, if
-C<psgi.streaming> is set. One can use this variable to catch the RDF
-data in another post-processing middleware.
-
-=item rdf.files
-
-An hash of source filenames, each with the number of triples (on success)
-as property C<size>, an error message as C<error> if parsing failed, and
-the timestamp of last modification as C<mtime>. C<size> and C<error> may
-not be given before parsing, if C<rdf.iterator> is set.
-
-=back
-
-If an existing resource does not contain triples, the axiomatic triple
-C<< $uri rdf:type rdfs:Resource >> is returned.
-
-=cut
 
 sub call {
     my ($self, $env) = @_;
@@ -267,16 +221,6 @@ sub call {
     }
 }
 
-=method negotiate( $env )
-
-This internal methods selects an RDF serializer based on the PSGI environment 
-variable C<negotiate.format> (see L<Plack::Middleware::Negotiate>) or the 
-C<negotiate> method of L<RDF::Trine::Serializer>. Returns first a 
-L<RDF::Trine::Serializer> on success or C<undef> on error) and second a 
-(possibly empty) list of HTTP response headers.
-
-=cut
-
 sub negotiate {
     my ($self, $env) = @_;
 
@@ -301,7 +245,12 @@ sub negotiate {
 }
 
 1;
+__END__
 
+=head1 NAME
+ 
+Plack::App::RDF::Files - serve RDF data from files
+ 
 =head1 SYNOPSIS
 
     my $app = Plack::App::RDF::Files->new(
@@ -359,6 +308,59 @@ Optional namespaces for serialization, passed to L<RDF::Trine::Serializer>.
 
 =back
 
+=head1 METHODS
+
+=head2 files( $env | $req | $str )
+
+Get a list of RDF files that will be read for a given request. The request can
+be specified as L<PSGI> environment, as L<Plack::Request>, or as partial URI
+that follows C<base_uri> (given as string). The requested URI is saved in field
+C<rdf.uri> of the request environment.  On success returns the base directory
+and a list of files, each mapped to its last modification time.  Undef is
+returned if the request contained invalid characters (everything but
+C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../> or a sequence starting with
+C</>) or if the request equals ro the base URI and C<include_index> was not
+enabled.
+
+=head2 call( $env )
+
+Core method of the PSGI application.
+
+The following PSGI environment variables are read and/or set by the
+application.
+
+=over 4
+
+=item rdf.uri
+
+The requested URI
+
+=item rdf.iterator
+
+The L<RDF::Trine::Iterator> that will be used for serializing, if
+C<psgi.streaming> is set. One can use this variable to catch the RDF
+data in another post-processing middleware.
+
+=item rdf.files
+
+An hash of source filenames, each with the number of triples (on success)
+as property C<size>, an error message as C<error> if parsing failed, and
+the timestamp of last modification as C<mtime>. C<size> and C<error> may
+not be given before parsing, if C<rdf.iterator> is set.
+
+=back
+
+If an existing resource does not contain triples, the axiomatic triple
+C<< $uri rdf:type rdfs:Resource >> is returned.
+
+=head2 negotiate( $env )
+
+This internal methods selects an RDF serializer based on the PSGI environment 
+variable C<negotiate.format> (see L<Plack::Middleware::Negotiate>) or the 
+C<negotiate> method of L<RDF::Trine::Serializer>. Returns first a 
+L<RDF::Trine::Serializer> on success or C<undef> on error) and second a 
+(possibly empty) list of HTTP response headers.
+
 =head1 SEE ALSO
 
 Use L<Plack::Middleware::Negotiate> to add content negotiation based on
@@ -368,5 +370,12 @@ See L<RDF::LinkedData> for a different module to serve RDF as linked data.
 See also L<RDF::Flow> and L<RDF::Lazy> for processing RDF data.
 
 See L<http://foafpress.org/> for a similar approach in PHP.
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright Jakob Voss, 2014-
+
+This library is free software; you can redistribute it and/or modify it under
+the same terms as Perl itself.
 
 =cut

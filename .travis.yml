@@ -1,21 +1,21 @@
 language: perl
 perl:
-   - "5.16"
-   - "5.14"
-   - "5.12"
-   - "5.10"
-
-before_install:
-   # Prevent "Please tell me who you are" errors for certain DZIL configs
-   - git config --global user.name "TravisCI"
-
+    - "5.20"
+    - "5.18"
+    - "5.16"
+    - "5.14"
+    - "5.12"
+    - "5.10"
 install:
-    # Deal with all of the DZIL dependancies, quickly and quietly
-   - cpanm --quiet --notest --skip-satisfied Dist::Zilla
-   - dzil authordeps | grep -vP '[^\w:]' | xargs -n 5 -P 10 cpanm --quiet --notest --skip-satisfied
-   - export RELEASE_TESTING=1 AUTOMATED_TESTING=1 AUTHOR_TESTING=1 HARNESS_OPTIONS=j10:c HARNESS_TIMER=1
-   - dzil listdeps | grep -vP '[^\w:]' | cpanm --verbose
+    - cpanm --quiet --notest --skip-satisfied Dist::Milla
+    - cpanm --quiet --notest --skip-satisfied RDF::Trine
+    - cpanm --installdeps .
 
+# full release test
 script:
-   - dzil smoke --release --author
+    - milla smoke --release --author
 
+# normal tests and report test coverage to coveralls.io
+after_success:
+    - cpanm --quiet --notest --skip-satisfied Devel::Cover::Report::Coveralls
+    - perl Build.PL && ./Build build && cover -test -report coveralls
