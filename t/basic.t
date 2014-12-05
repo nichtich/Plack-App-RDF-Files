@@ -4,6 +4,7 @@ use Test::More;
 use Plack::Test;
 use Plack::Builder;
 use HTTP::Request::Common;
+use JSON;
 
 use Plack::App::RDF::Files;
 
@@ -33,7 +34,7 @@ test_psgi $app, sub {
     $res = $cb->(GET "/alice");
     is $res->code, 200;
     is $res->content,
-        "<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> <http://example.org/bob> .\n",
+        "<http://example.org/alice> <http://xmlns.com/foaf/0.1/knows> \"B\\u00F6b\" .\n",
         "simple graph";
 
     $res = $cb->(GET "/foo");
@@ -48,23 +49,28 @@ test_psgi $app, sub {
         "<http://example.org/foo/bar> <http://www.w3.org/2000/01/rdf-schema#type> <http://example.org/Thing> .\n";
 };
 
-# TODO: test with Unicode
-# TODO: test env
-
-=head1
-$app = Plack::App::RDF::Files->new( base_dir => 't' );
+$app = Plack::App::RDF::Files->new( base_dir => 't/data' );
 
 test_psgi $app, sub {
 	my $cb  = shift;
 
-	my $res = $cb->(GET "/rdf1", Accept => 'text/turtle'); 
-	is $res->code, '200', '200 OK';
-    is $res->header('Content-Type'), 'text/turtle', 'text/turtle';
-
-    foreach my $missing ("/rdf0", "/", "../t/rdf1") {
-    	my $res = $cb->(GET $missing, Accept => 'text/turtle'); 
-	    is $res->code, '404', '404 not ok';
+    foreach my $format (qw(text/turtle application/json text/plain)) {
+    	my $res = $cb->(GET "/alice", Accept => $format);
+        is $res->header('Content-Type'), $format, "Accept: $format";
     }
+
+    foreach (qw(/ /rdf0 ../data/alice)) {
+    	is $cb->(GET $_)->code, '404', "404 not ok: $_";
+    }
+
+	my $res = $cb->(GET "/alice", Accept => 'application/json'); 
+	is $res->code, '200', '200 OK';
+    is $res->header('Content-Type'), 'application/json';
+    is_deeply (JSON->new->decode($res->decoded_content),
+        { "http://example.org/alice" => {
+            "http://xmlns.com/foaf/0.1/knows" =>
+                [ { "type" => "literal", "value" => "Böb"}]
+        } }, 'RDF/JSON');
 };
 
 $app = Plack::App::RDF::Files->new( base_dir => 't', index_property => 1 );
@@ -74,6 +80,5 @@ test_psgi $app, sub {
 	my $res = $cb->(GET "/", Accept => 'text/turtle'); 
 	is $res->code, '200', '200 OK';
 };
-=cut
 
 done_testing;

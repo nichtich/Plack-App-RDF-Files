@@ -1,24 +1,3 @@
-# 
-    if ( $self->index\_property and "$uri" eq ($self->base\_uri // $req->base) ) {
-        my $subject   = iri( $uri );
-        my $predicate = $self->index\_property;
-        my @stms;
-        # TODO
-        opendir(my $dirhandle, $dir);
-        foreach my $p (readdir $dirhandle) {
-            next unless -d catdir( $dir, $p ) and $p !~ /^\\.\\.?$/;
-            push @stms, statement(
-                $subject,
-                $predicate,
-                RDF::Trine::Node::Resource->new( "$uri$p" )
-            );
-        }
-        closedir $dirhandle;
-
-        my $i2 = RDF::Trine::Iterator::Graph->new( \@stms );
-        $iterator = $iterator->concat( $i2 );
-    }
-
 # NAME
 
 Plack::App::RDF::Files - serve RDF data from files
@@ -47,7 +26,7 @@ corresponds to a (sub)directory, located in a common based directory. All RDF
 files in a directory are merged and returned as RDF graph.
 
 HTTP HEAD and conditional GET requests are supported by ETag and
-Last-Modified-Headers (see also [Plack::Middleware::ConditionalGET](https://metacpan.org/pod/Plack::Middleware::ConditionalGET)).
+Last-Modified-Headers (see [Plack::Middleware::ConditionalGET](https://metacpan.org/pod/Plack::Middleware::ConditionalGET)).
 
 # CONFIGURATION
 
@@ -125,7 +104,7 @@ characters (everything but `a-zA-Z0-9:.@/-` and the forbidden sequence `../`
 or a sequence starting with `/`) or if the request equals ro the base URI and
 `include_index` was not enabled.
 
-## headers 
+## headers( $files ) 
 
 Get a response headers object (as provided by [Plack::Util](https://metacpan.org/pod/Plack::Util)::headers) with
 ETag and Last-Modified from a list of RDF files given as returned by the files

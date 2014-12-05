@@ -16,6 +16,7 @@ use Carp qw(croak);
 use Digest::MD5;
 use HTTP::Date;
 use List::Util qw(max);
+use Encode qw(encode_utf8); 
 
 our $VERSION = '0.10';
 
@@ -171,7 +172,8 @@ sub call {
     my $iterator = $model->as_stream;
 
     # add listing on base URI (TODO)
-=head1
+if(0) { 
+    my $dir = ""; # TODO
     if ( $self->index_property and "$uri" eq ($self->base_uri // $req->base) ) {
         my $subject   = iri( $uri );
         my $predicate = $self->index_property;
@@ -191,7 +193,7 @@ sub call {
         my $i2 = RDF::Trine::Iterator::Graph->new( \@stms );
         $iterator = $iterator->concat( $i2 );
     }
-=cut
+}
 
     # add axiomatic triple to empty graphs (TODO: inly if configured)
     if ($iterator->finished) {
@@ -202,8 +204,6 @@ sub call {
         ) ] );
     }
 
-    #print STDERR "$serializer\n";
-
     # construct PSGI response
     if ( $env->{'psgi.streaming'} ) {
         $env->{'rdf.iterator'} = $iterator;
@@ -211,8 +211,7 @@ sub call {
             my $responder = shift;
             # TODO: use IO::Handle::Iterator to serialize as last as possible
             my $rdf = $serializer->serialize_iterator_to_string( $env->{'rdf.iterator'} );
-            use Encode; # must be bytes
-            $rdf = encode("UTF8",$rdf); # TODO: check
+            $rdf = encode_utf8($rdf); # encode as sequence of bytes
             $responder->( [ 200, $headers->headers, [ $rdf ] ] );
         };
     } else {
@@ -274,7 +273,7 @@ corresponds to a (sub)directory, located in a common based directory. All RDF
 files in a directory are merged and returned as RDF graph.
 
 HTTP HEAD and conditional GET requests are supported by ETag and
-Last-Modified-Headers (see also L<Plack::Middleware::ConditionalGET>).
+Last-Modified-Headers (see L<Plack::Middleware::ConditionalGET>).
 
 =head1 CONFIGURATION
 
@@ -360,7 +359,7 @@ characters (everything but C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../>
 or a sequence starting with C</>) or if the request equals ro the base URI and
 C<include_index> was not enabled.
 
-=head2 headers 
+=head2 headers( $files ) 
 
 Get a response headers object (as provided by L<Plack::Util>::headers) with
 ETag and Last-Modified from a list of RDF files given as returned by the files
