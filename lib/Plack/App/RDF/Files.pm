@@ -17,6 +17,7 @@ use Digest::MD5;
 use HTTP::Date;
 use List::Util qw(max);
 use Encode qw(encode_utf8); 
+use Moo;
 
 our $VERSION = '0.10';
 
@@ -27,8 +28,6 @@ our %FORMATS = (
     json    => 'RDFJSON',
     rdfxml  => 'RDFXML'
 );
-
-use Moo;
 
 has base_dir => (
     is => 'ro', required => 1,
@@ -52,10 +51,10 @@ has path_map => (
 );
 
 has index_property => (
-    is => 'ro', 
+    is => 'rw', 
     coerce => sub {
         $_[0] ? 
-        iri($_[0] == 1 ? 'http://www.w3.org/2000/01/rdf-schema#seeAlso' : $_[0])
+        iri($_[0] eq '1' ? 'http://www.w3.org/2000/01/rdf-schema#seeAlso' : $_[0])
         : undef
     },
 );
@@ -64,23 +63,47 @@ has namespaces => (
     is => 'ro'
 );
 
+   
+# find out which URI to retrieve for
+sub _uri {
+    my ($self, $env) = @_;
+    my $req = Plack::Request->new($env);
+    if (!$env->{'rdf.uri'}) {
+        $env->{'rdf.uri'} = URI->new(
+            ($self->base_uri // $req->base) . $self->_path($env)
+        );
+    } elsif (!ref $env->{'rdf.uri'}) {
+        $env->{'rdf.uri'} = URI->new( $env->{'rdf.uri'} );
+    }
+    $env->{'rdf.uri'};
+}
+
+sub _path {
+    my ($self, $env) = @_;
+    my $path = substr(Plack::Request->new($env)->path, 1);
+    if ($path =~ /^[a-z0-9:\._@\/-]*$/i and $path !~ /\.\.\/|^\//) {
+        return $path;
+    } else {
+        return;
+    }
+}
+
+sub _dir {
+    my ($self, $path) = @_;
+    my $dir = catdir( $self->base_dir, $self->path_map->($path) );
+    return (-d $dir ? $dir : undef);
+}
+
 sub files {
     my ($self, $env) = @_;
-    my $req  = Plack::Request->new($env);
-    my $path = substr($req->path,1);
 
-    return if $path !~ /^[a-z0-9:\._@\/-]*$/i or $path =~ /\.\.\/|^\//;
-
-    # TODO: what if already set?
-    $env->{'rdf.uri'} = URI->new( ($self->base_uri // $req->base) . $path );
-
+    my $path = $self->_path($env);
+    return if !defined $path;
     return if $path eq '' and !$self->index_property;
 
-
-    my $dir = catdir( $self->base_dir, $self->path_map->($path) );
-
-    return unless -d $dir;
-    return unless -r $dir and opendir(my $dh, $dir);
+    my $dir = $self->_dir($path);
+    return unless eval { -r $dir };
+    return unless opendir(my $dh, $dir);
 
     my $files = { };
     while ( readdir $dh ) {
@@ -99,6 +122,31 @@ sub files {
     return $files;
 }
 
+sub index_statements {
+    my ($self, $req) = @_;
+
+    my $uri       = $self->_uri($req->env);
+    my $subject   = iri($uri);
+    my $predicate = $self->index_property;
+
+    my $statements = [ ];
+    my $dir = $self->_dir($self->_path($req->env));
+
+    if ( opendir(my $dirhandle, $dir) ) {
+        foreach my $p (readdir $dirhandle) {
+            next unless -d catdir( $dir, $p ) and $p !~ /^\.\.?$/;
+            push @$statements, statement(
+                $subject,
+                $predicate,
+                RDF::Trine::Node::Resource->new( "$uri$p" )
+            );
+        }
+        closedir $dirhandle;
+    }
+
+    return $statements;
+}
+
 sub call {
     my ($self, $env) = @_;
     my $req = Plack::Request->new($env);
@@ -106,13 +154,14 @@ sub call {
     return [405, ['Content-type' => 'text/plain'], ['Method not allowed']]
         unless (($req->method eq 'GET') || ($req->method eq 'HEAD'));
 
-    # get RDF files
+    # find out which RDF files to retrieve
     my $files = $self->files($env);
+
     return [404, ['Content-type' => 'text/plain'], ['Not found']]
         unless $files;
 
+    my $uri     = $self->_uri($env);
     my $headers = $self->headers($files);
-    my $uri = $env->{'rdf.uri'};
 
     # negotiate serialization format
     my $serializer;
@@ -149,7 +198,6 @@ sub call {
         return [200, $headers->headers, []];
     }
 
-
     # parse RDF
     my $model = RDF::Trine::Model->new;
     my $triples = 0;
@@ -171,29 +219,13 @@ sub call {
 
     my $iterator = $model->as_stream;
 
-    # add listing on base URI (TODO)
-if(0) { 
-    my $dir = ""; # TODO
+    # add listing on base URI
     if ( $self->index_property and "$uri" eq ($self->base_uri // $req->base) ) {
-        my $subject   = iri( $uri );
-        my $predicate = $self->index_property;
-        my @stms;
-        # TODO
-        opendir(my $dirhandle, $dir);
-        foreach my $p (readdir $dirhandle) {
-            next unless -d catdir( $dir, $p ) and $p !~ /^\.\.?$/;
-            push @stms, statement(
-                $subject,
-                $predicate,
-                RDF::Trine::Node::Resource->new( "$uri$p" )
-            );
+        my $stms = $self->index_statements($req);
+        if (@$stms) {
+            $iterator = $iterator->concat( RDF::Trine::Iterator::Graph->new( $stms ) );
         }
-        closedir $dirhandle;
-
-        my $i2 = RDF::Trine::Iterator::Graph->new( \@stms );
-        $iterator = $iterator->concat( $i2 );
     }
-}
 
     # add axiomatic triple to empty graphs (TODO: inly if configured)
     if ($iterator->finished) {
@@ -296,12 +328,10 @@ C<['rdfxml','nt','ttl']> by default.
 =item index_property
 
 By default a HTTP 404 error is returned if one tries to access the base
-directory. Enable this option to also serve RDF data from this location.
-
-RDF property to use for listing all resources connected to the base URI (if
-<include_index> is enabled).  Set to C<rdfs:seeAlso> if set to 1.
-
-I<This feature is currently disabled>
+directory. Enable this option by setting it to 1 or to an URI, to also serve
+RDF data from the base directory.  By default
+C<http://www.w3.org/2000/01/rdf-schema#seeAlso> is used as index property, if
+enabled.
 
 =item path_map
 
@@ -356,8 +386,8 @@ The requested URI is saved in field C<rdf.uri> of the request environment.  On
 success returns the base directory and a list of files, each mapped to its last
 modification time.  Undef is returned if the request contained invalid
 characters (everything but C<a-zA-Z0-9:.@/-> and the forbidden sequence C<../>
-or a sequence starting with C</>) or if the request equals ro the base URI and
-C<include_index> was not enabled.
+or a sequence starting with C</>), or if called with the base URI and
+C<index_property> not enabled.
 
 =head2 headers( $files ) 
 

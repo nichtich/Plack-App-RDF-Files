@@ -47,12 +47,10 @@ Last-Modified-Headers (see [Plack::Middleware::ConditionalGET](https://metacpan.
 - index\_property
 
     By default a HTTP 404 error is returned if one tries to access the base
-    directory. Enable this option to also serve RDF data from this location.
-
-    RDF property to use for listing all resources connected to the base URI (if
-    <include\_index> is enabled).  Set to `rdfs:seeAlso` if set to 1.
-
-    _This feature is currently disabled_
+    directory. Enable this option by setting it to 1 or to an URI, to also serve
+    RDF data from the base directory.  By default
+    `http://www.w3.org/2000/01/rdf-schema#seeAlso` is used as index property, if
+    enabled.
 
 - path\_map
 
@@ -101,8 +99,8 @@ The requested URI is saved in field `rdf.uri` of the request environment.  On
 success returns the base directory and a list of files, each mapped to its last
 modification time.  Undef is returned if the request contained invalid
 characters (everything but `a-zA-Z0-9:.@/-` and the forbidden sequence `../`
-or a sequence starting with `/`) or if the request equals ro the base URI and
-`include_index` was not enabled.
+or a sequence starting with `/`), or if called with the base URI and
+`index_property` not enabled.
 
 ## headers( $files ) 
 

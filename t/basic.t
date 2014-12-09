@@ -73,12 +73,4 @@ test_psgi $app, sub {
         } }, 'RDF/JSON');
 };
 
-$app = Plack::App::RDF::Files->new( base_dir => 't', index_property => 1 );
-
-test_psgi $app, sub {
-	my $cb  = shift;
-	my $res = $cb->(GET "/", Accept => 'text/turtle'); 
-	is $res->code, '200', '200 OK';
-};
-
 done_testing;

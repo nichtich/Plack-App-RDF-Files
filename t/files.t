@@ -54,6 +54,7 @@ foreach my $test (@tests) {
     if ($uri !~ /^http:/) {
         $uri = $app->base_uri . substr($uri,1);
     }
+    $app->_uri($env);
     is $env->{'rdf.uri'}, $uri, "rdf.uri = $uri";
 }
 
