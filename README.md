@@ -89,7 +89,7 @@ application.
 
 - rdf.uri
 
-    The requested URI
+    The requested URI as string or [URI](https://metacpan.org/pod/URI) object.
 
 - rdf.iterator
 
@@ -103,6 +103,11 @@ application.
     as property `size`, an error message as `error` if parsing failed, and
     the timestamp of last modification as `mtime`. `size` and `error` may
     not be given before parsing, if `rdf.iterator` is set.
+
+- negotiate.format
+
+    RDF serialization format (See [Plack::Middleware::Negotiate](https://metacpan.org/pod/Plack::Middleware::Negotiate)). Supported
+    values are `ttl`, `nt`, `n3`, `json`, and `rdfxml`.
 
 If an existing resource does not contain triples, the axiomatic triple
 `$uri rdf:type rdfs:Resource` is returned.

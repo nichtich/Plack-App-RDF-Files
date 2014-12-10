@@ -1,6 +1,7 @@
 # Changelog for Plack-App-RDF-Files
 
 {{$NEXT}}
+    - fix non-streaming Unicode
     - migrated to Dist::Milla and Moo
     - major code cleanup and refactoring
     - add HTTP HEAD and conditional GET

@@ -81,6 +81,7 @@ sub _uri {
 sub _path {
     my ($self, $env) = @_;
     my $path = substr(Plack::Request->new($env)->path, 1);
+
     if ($path =~ /^[a-z0-9:\._@\/-]*$/i and $path !~ /\.\.\/|^\//) {
         return $path;
     } else {
@@ -250,6 +251,7 @@ sub call {
         };
     } else {
         my $rdf = $serializer->serialize_iterator_to_string( $iterator );
+        $rdf = encode_utf8($rdf); # encode as sequence of bytes
         return [ 200, $headers->headers, [ $rdf ] ];
     }
 }
@@ -376,7 +378,7 @@ application.
 
 =item rdf.uri
 
-The requested URI
+The requested URI as string or L<URI> object.
 
 =item rdf.iterator
 
@@ -390,6 +392,11 @@ An hash of source filenames, each with the number of triples (on success)
 as property C<size>, an error message as C<error> if parsing failed, and
 the timestamp of last modification as C<mtime>. C<size> and C<error> may
 not be given before parsing, if C<rdf.iterator> is set.
+
+=item negotiate.format
+
+RDF serialization format (See L<Plack::Middleware::Negotiate>). Supported
+values are C<ttl>, C<nt>, C<n3>, C<json>, and C<rdfxml>.
 
 =back
 

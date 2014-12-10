@@ -51,6 +51,13 @@ test_psgi $app, sub {
 
 $app = Plack::App::RDF::Files->new( base_dir => 't/data' );
 
+my $rdf_json = { 
+    "http://example.org/alice" => {
+            "http://xmlns.com/foaf/0.1/knows" =>
+                [ { "type" => "literal", "value" => "Böb"}]
+        } 
+    };
+
 test_psgi $app, sub {
 	my $cb  = shift;
 
@@ -66,11 +73,15 @@ test_psgi $app, sub {
 	my $res = $cb->(GET "/alice", Accept => 'application/json'); 
 	is $res->code, '200', '200 OK';
     is $res->header('Content-Type'), 'application/json';
-    is_deeply (JSON->new->decode($res->decoded_content),
-        { "http://example.org/alice" => {
-            "http://xmlns.com/foaf/0.1/knows" =>
-                [ { "type" => "literal", "value" => "Böb"}]
-        } }, 'RDF/JSON');
+    is_deeply (JSON->new->decode($res->decoded_content), $rdf_json, 'RDF/JSON');
 };
+
+# test non-streaming
+my $env = GET("/alice")->to_psgi; 
+$env->{'psgi.streaming'} = 0;
+$env->{'negotiate.format'} = 'json';
+#$env->{'rdf.uri'} = 'http://example.com/bob';
+my $res = $app->call($env);
+is_deeply( JSON->new->decode($res->[2]->[0]), $rdf_json, 'non-streaming, negotiate.format' );
 
 done_testing;
