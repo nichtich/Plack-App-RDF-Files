@@ -10,7 +10,11 @@ perl:
 matrix:
     allow_failures:
         - perl: 5.10
-          
+      
+# fix https://github.com/miyagawa/cpanminus/issues/412    
+before_install:
+    - cpanm -nq Pod::Readme
+
 install:
     - cpanm --quiet --notest --skip-satisfied Dist::Milla
     - cpanm --quiet --notest --skip-satisfied RDF::Trine
