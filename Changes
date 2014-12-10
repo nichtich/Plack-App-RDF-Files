@@ -1,6 +1,8 @@
 # Changelog for Plack-App-RDF-Files
 
 {{$NEXT}}
+
+0.10  2014-12-10 15:12:08 CET
     - fix non-streaming Unicode
     - migrated to Dist::Milla and Moo
     - major code cleanup and refactoring
