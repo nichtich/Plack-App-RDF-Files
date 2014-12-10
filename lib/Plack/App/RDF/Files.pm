@@ -130,7 +130,9 @@ sub index_statements {
     my $predicate = $self->index_property;
 
     my $statements = [ ];
-    my $dir = $self->_dir($self->_path($req->env));
+    my $path = $self->_path($req->env);
+    return [ ] if !defined $path;
+    my $dir = $self->_dir($path);
 
     if ( opendir(my $dirhandle, $dir) ) {
         foreach my $p (readdir $dirhandle) {
@@ -227,7 +229,7 @@ sub call {
         }
     }
 
-    # add axiomatic triple to empty graphs (TODO: inly if configured)
+    # add axiomatic triple to empty graphs
     if ($iterator->finished) {
         $iterator = RDF::Trine::Iterator::Graph->new( [ statement(
             iri($uri),
@@ -289,20 +291,37 @@ Plack::App::RDF::Files - serve RDF data from files
 
 =head1 SYNOPSIS
 
-    my $app = Plack::App::RDF::Files->new(
-        base_dir => '/path/to/rdf/
-    );
+Create a file C<app.psgi>:
 
-    # Requests URI            =>  RDF files
-    # http://example.org/     =>  /path/to/rdf/*.(nt|ttl|rdfxml)
-    # http://example.org/foo  =>  /path/to/rdf/foo/*.(nt|ttl|rdfxml)
-    # http://example.org/x/y  =>  /path/to/rdf/x/y/*.(nt|ttl|rdfxml)
+    use Plack::App::RDF::Files;
+    Plack::App::RDF::Files->new(
+        base_dir => '/path/to/rdf/',       # mandatory
+        base_uri => 'http://example.org/'  # optional
+    )->to_app;
+
+Run it as web application by calling C<plackup>. Request URLs are then mapped
+to URIs and directories to return data from RDF files as following:
+
+    http://localhost:5000/foo  =>  http://example.org/foo
+                                         /path/to/rdf/foo/
+                                         /path/to/rdf/foo/*.(nt|ttl|rdfxml)
+    http://localhost:5000/x/y  =>  http://example.org/x/y
+                                         /path/to/rdf/x/y/
+                                         /path/to/rdf/x/y/*.(nt|ttl|rdfxml)
+
+In short, each subdirectory corresponds to an RDF resource.
 
 =head1 DESCRIPTION
 
 This L<PSGI> application serves RDF from files. Each accessible RDF resource
 corresponds to a (sub)directory, located in a common based directory. All RDF
-files in a directory are merged and returned as RDF graph.
+files in a directory are merged and returned as RDF graph. If no RDF data was
+found in an existing subdirectory, an axiomatic triple is returned:
+
+    $REQUEST_URI <a <http://www.w3.org/2000/01/rdf-schema#Resource> .
+
+Requesting the base directory, however will result in a HTTP 404 error unless
+option C<index_property> is enabled.
 
 HTTP HEAD and conditional GET requests are supported by ETag and
 Last-Modified-Headers (see L<Plack::Middleware::ConditionalGET>).
