@@ -1,6 +1,8 @@
 # Changelog for Plack-App-RDF-Files
 
 {{$NEXT}}
+    - improved serialization, especially for Unicode characters
+    - added 'app' function to simplify one-liners
 
 0.10  2014-12-10 15:12:08 CET
     - fix non-streaming Unicode

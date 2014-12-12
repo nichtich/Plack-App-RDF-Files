@@ -24,7 +24,7 @@ test_psgi $app, sub {
 	is $res->code, '200', '200 OK (index_property 1)';
 
     my @index = sort ($res->content =~ /$RE/g);
-    is_deeply \@index, [qw(alice foo)], 'index';
+    is_deeply \@index, [qw(alice foo unicode)], 'index';
 
     $app->index_property('http://purl.org/dc/terms/hasPart');
 	$res = $cb->(GET "/", Accept => 'text/plain'); 

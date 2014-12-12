@@ -62,7 +62,7 @@
          "web" : "https://github.com/nichtich/Plack-App-RDF-Files"
       }
    },
-   "version" : "0.10",
+   "version" : "0.11",
    "x_contributors" : [
       "Jakob Voss <jakob@nichtich.de>",
       "Jakob Voss <voss@gbv.de>"

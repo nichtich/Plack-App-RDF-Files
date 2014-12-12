@@ -10,7 +10,11 @@ Plack::App::RDF::Files - serve RDF data from files
 
 # SYNOPSIS
 
-Create a file `app.psgi`:
+Create and run a Linked Open Data server in one line:
+
+    plackup -e 'use Plack::App::RDF::Files "app"; app(base_dir=>"/path/to/rdf")'
+
+In more detail, create a file `app.psgi`:
 
     use Plack::App::RDF::Files;
     Plack::App::RDF::Files->new(
@@ -129,6 +133,13 @@ or a sequence starting with `/`), or if called with the base URI and
 Get a response headers object (as provided by [Plack::Util](https://metacpan.org/pod/Plack::Util)::headers) with
 ETag and Last-Modified from a list of RDF files given as returned by the files
 method.
+
+# FUNCTIONS
+
+## app( %options )
+
+This shortcut for `Plack::App::RDF::Files->new` can be exported on request
+to simplify one-liners.
 
 # SEE ALSO
 

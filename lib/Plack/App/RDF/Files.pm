@@ -16,10 +16,10 @@ use Carp qw(croak);
 use Digest::MD5;
 use HTTP::Date;
 use List::Util qw(max);
-use Encode qw(encode_utf8); 
+use Encode qw(is_utf8 encode_utf8); 
 use Moo;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 our %FORMATS = (
     ttl     => 'Turtle',
@@ -63,7 +63,7 @@ has namespaces => (
     is => 'ro'
 );
 
-   
+  
 # find out which URI to retrieve for
 sub _uri {
     my ($self, $env) = @_;
@@ -244,16 +244,28 @@ sub call {
         $env->{'rdf.iterator'} = $iterator;
         return sub {
             my $responder = shift;
-            # TODO: use IO::Handle::Iterator to serialize as last as possible
-            my $rdf = $serializer->serialize_iterator_to_string( $env->{'rdf.iterator'} );
-            $rdf = encode_utf8($rdf); # encode as sequence of bytes
-            $responder->( [ 200, $headers->headers, [ $rdf ] ] );
+            my $body = $self->_serialize_body( $serializer, $iterator );       
+            $responder->( [ 200, $headers->headers, $body ] );
         };
     } else {
-        my $rdf = $serializer->serialize_iterator_to_string( $iterator );
-        $rdf = encode_utf8($rdf); # encode as sequence of bytes
-        return [ 200, $headers->headers, [ $rdf ] ];
+        my $body = $self->_serialize_body( $serializer, $iterator );
+        return [ 200, $headers->headers, $body ];
     }
+}
+
+sub _serialize_body {
+    my ($self, $serializer, $iterator) = @_;
+
+    my $string  = '';
+    open ( my $fh, '>:encoding(UTF-8)', \$string );
+    $serializer->serialize_iterator_to_file($fh, $iterator);
+    close $fh;
+   
+    # because RDFJSON Serializer emits UTF8
+    # $string = encode_utf8($rdf) if is_utf8($rdf);
+
+    open ($fh, '<', \$string);
+    return $fh;
 }
 
 sub headers {
@@ -274,6 +286,10 @@ sub headers {
     ]);
 }
 
+use parent 'Exporter';
+our @EXPORT_OK = qw(app);
+sub app { Plack::App::RDF::Files->new(@_) }
+ 
 1;
 __END__
 
@@ -293,7 +309,11 @@ Plack::App::RDF::Files - serve RDF data from files
 
 =head1 SYNOPSIS
 
-Create a file C<app.psgi>:
+Create and run a Linked Open Data server in one line:
+
+    plackup -e 'use Plack::App::RDF::Files "app"; app(base_dir=>"/path/to/rdf")'
+
+In more detail, create a file C<app.psgi>:
 
     use Plack::App::RDF::Files;
     Plack::App::RDF::Files->new(
@@ -420,6 +440,13 @@ C<index_property> not enabled.
 Get a response headers object (as provided by L<Plack::Util>::headers) with
 ETag and Last-Modified from a list of RDF files given as returned by the files
 method.
+
+=head1 FUNCTIONS
+
+=head2 app( %options )
+
+This shortcut for C<< Plack::App::RDF::Files->new >> can be exported on request
+to simplify one-liners.
 
 =head1 SEE ALSO
 
