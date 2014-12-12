@@ -82,7 +82,7 @@ $env->{'psgi.streaming'} = 0;
 $env->{'negotiate.format'} = 'json';
 #$env->{'rdf.uri'} = 'http://example.com/bob';
 my $res = $app->call($env);
-my $fh = $res->[2]; 
-is_deeply( JSON->new->decode(<$fh>), $rdf_json, 'non-streaming, negotiate.format' );
+my $body = ref $res->[2] eq 'ARRAY' ? $res->[2]->[0] : $res->[2]->getline;
+is_deeply( JSON->new->decode($body), $rdf_json, 'non-streaming, negotiate.format' );
 
 done_testing;

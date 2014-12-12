@@ -7,7 +7,7 @@ use parent 'Plack::Component';
 use Plack::Util;
 use Plack::Request;
 use Plack::Middleware::ConditionalGET;
-
+use Plack::Util;
 use RDF::Trine qw(statement iri);
 use File::Spec::Functions qw(catfile catdir);
 use URI;
@@ -256,16 +256,21 @@ sub call {
 sub _serialize_body {
     my ($self, $serializer, $iterator) = @_;
 
-    my $string  = '';
-    open ( my $fh, '>:encoding(UTF-8)', \$string );
-    $serializer->serialize_iterator_to_file($fh, $iterator);
-    close $fh;
-   
-    # because RDFJSON Serializer emits UTF8
-    # $string = encode_utf8($rdf) if is_utf8($rdf);
+    # serialize as last as possible
+    return Plack::Util::inline_object(
+        getline => sub {
+            return if !$iterator or $iterator->finished;
 
-    open ($fh, '<', \$string);
-    return $fh;
+            my $string  = '';
+            open ( my $fh, '>:encoding(UTF-8)', \$string );
+            $serializer->serialize_iterator_to_file($fh, $iterator);
+            close $fh;
+            $iterator = 0;
+
+            return $string;
+        },
+        close => sub { $iterator = 0 },
+    );
 }
 
 sub headers {
