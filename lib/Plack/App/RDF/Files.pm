@@ -162,7 +162,7 @@ sub call {
     my ($self, $env) = @_;
     my $req = Plack::Request->new($env);
 
-    return [405, ['Content-type' => 'text/plain'], ['Method not allowed']]
+    return [405, ['Content-type' => 'text/plain', 'Allow' => 'GET,HEAD'], ['Method not allowed']]
         unless (($req->method eq 'GET') || ($req->method eq 'HEAD'));
 
     # find out which RDF files to retrieve
