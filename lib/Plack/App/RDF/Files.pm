@@ -19,7 +19,7 @@ use List::Util qw(max);
 use Encode qw(is_utf8 encode_utf8); 
 use Moo;
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 our %FORMATS = (
     ttl     => 'Turtle',
@@ -63,6 +63,14 @@ has namespaces => (
     is => 'ro'
 );
 
+has normalize => (
+    is => 'ro',
+    coerce => sub {
+        return unless $_[0];
+        require Unicode::Normalize;
+        $_[0] =~ /^nf(k?[dc])$/i ? uc($1) : die "unknown normalization form: $_[0]";
+    }
+);
   
 # find out which URI to retrieve for
 sub _uri {
@@ -204,12 +212,27 @@ sub call {
     # parse RDF
     my $model = RDF::Trine::Model->new;
     my $triples = 0;
+    my $add_statement = $self->normalize 
+            ? sub { 
+                my $s = $_[0];
+                if ($s->object->is_literal) {
+                    my $value = Unicode::Normalize::normalize($self->normalize, $s->object->literal_value);
+                    $s->object->literal_value($value);
+                }
+                $model->add_statement($s); 
+              } 
+            : sub { 
+                $model->add_statement($_[0]); 
+            };
 
     while (my ($name, $file) = each %$files) {
         my $fullname = catdir($file->{location},$name);
         my $parser = RDF::Trine::Parser->guess_parser_by_filename( $fullname );
-        eval {
-            $parser->parse_file_into_model( $uri, $fullname, $model );
+        $parser = $parser->new unless ref $parser;
+        eval { # parse file into model
+            $model->begin_bulk_ops;
+            $parser->parse_file( $uri, $fullname, $add_statement );
+            $model->end_bulk_ops();
         };
         if ($@) {
             $file->{error} = $@;
@@ -387,6 +410,11 @@ directory. Set to the identity mapping by default.
 =item namespaces
 
 Optional namespaces for serialization, passed to L<RDF::Trine::Serializer>.
+
+=item normalize
+
+Optional Unicode Normalization form (NFD, NFKC, NFC, NFKC). Requires
+L<Unicode::Normalize>.
 
 =back
 

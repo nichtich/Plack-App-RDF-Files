@@ -1,6 +1,7 @@
 # Changelog for Plack-App-RDF-Files
 
 {{$NEXT}}
+    - additional option 'normalize'
 
 0.11  2014-12-12 12:02:37 CET
     - improved serialization, especially for Unicode characters
