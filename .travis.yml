@@ -5,12 +5,8 @@ perl:
     - 5.16
     - 5.14
     - 5.12
-    - 5.10
       
-matrix:
-    allow_failures:
-        - perl: 5.10
-      
+     
 # fix https://github.com/miyagawa/cpanminus/issues/412    
 before_install:
     - cpanm -nq Pod::Readme

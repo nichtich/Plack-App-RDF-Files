@@ -46,7 +46,8 @@
       },
       "test" : {
          "requires" : {
-            "HTTP::Request::Common" : "0"
+            "HTTP::Request::Common" : "0",
+            "Unicode::Normalize" : "0"
          }
       }
    },
@@ -62,10 +63,11 @@
          "web" : "https://github.com/nichtich/Plack-App-RDF-Files"
       }
    },
-   "version" : "0.11",
+   "version" : "0.12",
    "x_contributors" : [
       "Jakob Voss <jakob@nichtich.de>",
-      "Jakob Voss <voss@gbv.de>"
+      "Jakob Voss <voss@gbv.de>",
+      "cm-perl <cm-perl@users.noreply.github.com>"
    ]
 }
 

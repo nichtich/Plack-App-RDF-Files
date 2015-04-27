@@ -82,6 +82,11 @@ Last-Modified-Headers (see [Plack::Middleware::ConditionalGET](https://metacpan.
 
     Optional namespaces for serialization, passed to [RDF::Trine::Serializer](https://metacpan.org/pod/RDF::Trine::Serializer).
 
+- normalize
+
+    Optional Unicode Normalization form (NFD, NFKC, NFC, NFKC). Requires
+    [Unicode::Normalize](https://metacpan.org/pod/Unicode::Normalize).
+
 # METHODS
 
 ## call( $env )
