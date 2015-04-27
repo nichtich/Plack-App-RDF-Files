@@ -1,6 +1,8 @@
 # Changelog for Plack-App-RDF-Files
 
 {{$NEXT}}
+
+0.12  2015-04-27 17:03:03 CEST
     - additional option 'normalize'
 
 0.11  2014-12-12 12:02:37 CET
